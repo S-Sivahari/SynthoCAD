@@ -9,6 +9,7 @@ sys.path.append(r"C:\Program Files\FreeCAD 1.0\lib")
 
 import FreeCAD as App
 import Part
+import math
 
 
 # ============================================================================
@@ -925,6 +926,48 @@ def sprocket(doc, num_teeth=16, pitch=12.7, bore_diameter=10, thickness=8):
     print(f"✓ Sprocket: {num_teeth} teeth, pitch={pitch}mm")
     return sprocket
 
+def rack_gear(doc, length=100, width=10, height=10, module=1):
+    """Create a linear gear rack"""
+    # Base bar
+    rack = Part.makeBox(length, width, height)
+    
+    # Teeth parameters (simplified 20 degree pressure angle involute approx)
+    pitch = module * math.pi
+    tooth_depth = 2.25 * module
+    
+    num_teeth = int(length / pitch)
+    
+    tooth_base = pitch / 2
+    tooth_top = pitch / 4
+    
+    # Create a prism for the tooth
+    p1 = App.Vector(0, 0, 0)
+    p2 = App.Vector(tooth_base, 0, 0)
+    p3 = App.Vector(tooth_base - (tooth_base-tooth_top)/2, 0, tooth_depth)
+    p4 = App.Vector((tooth_base-tooth_top)/2, 0, tooth_depth)
+    p5 = App.Vector(0, 0, 0) # Close loop
+    
+    wire = Part.Wire(Part.makePolygon([p1, p2, p3, p4, p5]))
+    face = Part.Face(wire)
+    tooth = face.extrude(App.Vector(0, width, 0))
+    
+    # Move tooth to top of rack
+    tooth.translate(App.Vector(0, 0, height))
+    
+    # Pattern the teeth
+    all_teeth = tooth
+    for i in range(1, num_teeth):
+        next_tooth = tooth.copy()
+        next_tooth.translate(App.Vector(i * pitch, 0, 0))
+        all_teeth = all_teeth.fuse(next_tooth)
+        
+    final_rack = rack.fuse(all_teeth)
+    
+    obj = doc.addObject("Part::Feature", "RackGear")
+    obj.Shape = final_rack
+    doc.recompute()
+    print(f"✓ Rack Gear: L={length}mm, Module={module}")
+    return final_rack
 
 # ============================================================================
 # RIBS & SUPPORTS
@@ -1184,6 +1227,38 @@ def washer(doc, inner_diameter=10, outer_diameter=20, thickness=2, washer_type='
     print(f"✓ Washer: ID={inner_diameter}mm, OD={outer_diameter}mm, {washer_type}")
     return washer_shape
 
+def hex_bolt(doc, size=5, length=20, thread_length=None, head_height=None):
+    """Create a simplified Hex Bolt (standard metric proportions)"""
+    # Defaults based on ISO metric coarse threads if not provided
+    if head_height is None:
+        head_height = size * 0.7
+    if thread_length is None:
+        thread_length = length  # Fully threaded by default
+        
+    # 1. Create the Shaft
+    shaft = Part.makeCylinder(size/2, length)
+    
+    # 2. Create the Hex Head
+    hex_radius = (size * 1.6) / math.sqrt(3) 
+    # Create a 6-sided polygon wire
+    edges = []
+    angle_step = 2 * math.pi / 6
+    for i in range(6):
+        p1 = App.Vector(hex_radius * math.cos(i * angle_step), hex_radius * math.sin(i * angle_step), 0)
+        p2 = App.Vector(hex_radius * math.cos((i+1) * angle_step), hex_radius * math.sin((i+1) * angle_step), 0)
+        edges.append(Part.makeLine(p1, p2))
+    
+    hex_wire = Part.Wire(edges)
+    hex_face = Part.Face(hex_wire)
+    head = hex_face.extrude(App.Vector(0, 0, head_height))
+    
+    bolt = head.fuse(shaft)
+    
+    obj = doc.addObject("Part::Feature", "HexBolt")
+    obj.Shape = bolt
+    doc.recompute()
+    print(f"✓ Hex Bolt: M{size} x {length}mm")
+    return bolt
 
 def bushing(doc, outer_diameter=30, inner_diameter=20, length=40, flange=False, flange_diameter=40, flange_thickness=5):
     """Create a bushing/sleeve"""
@@ -1208,6 +1283,27 @@ def bushing(doc, outer_diameter=30, inner_diameter=20, length=40, flange=False, 
     doc.recompute()
     print(f"✓ Bushing: OD={outer_diameter}mm, ID={inner_diameter}mm, L={length}mm")
     return bushing_shape
+
+def bearing_radial(doc, inner_dia=8, outer_dia=22, width=7):
+    """Create a simplified radial ball bearing (e.g., 608 series)"""
+    # Outer Race
+    outer_cyl = Part.makeCylinder(outer_dia/2, width)
+    outer_cut = Part.makeCylinder((outer_dia/2) - (outer_dia-inner_dia)*0.15, width) # Thin wall
+    outer_race = outer_cyl.cut(outer_cut)
+    
+    # Inner Race
+    inner_cyl = Part.makeCylinder((inner_dia/2) + (outer_dia-inner_dia)*0.15, width)
+    inner_cut = Part.makeCylinder(inner_dia/2, width)
+    inner_race = inner_cyl.cut(inner_cut)
+    
+    # Fuse them (conceptually one part for the BOM)
+    bearing = outer_race.fuse(inner_race)
+    
+    obj = doc.addObject("Part::Feature", "Bearing")
+    obj.Shape = bearing
+    doc.recompute()
+    print(f"✓ Bearing: ID={inner_dia} OD={outer_dia} W={width}")
+    return bearing
 
 
 def spacer(doc, outer_diameter=20, inner_diameter=10, thickness=5):
@@ -1445,6 +1541,46 @@ def circular_flange(doc, outer_diameter=100, inner_diameter=50, thickness=10,
     print(f"✓ Circular flange: OD={outer_diameter}mm, ID={inner_diameter}mm, {num_bolts} bolts")
     return flange
 
+# ============================================================================
+# PIPING & FLUID
+# ============================================================================
+
+def pipe_elbow(doc, inner_dia=20, wall_thickness=3, bend_radius=30, angle=90):
+    """Create a pipe elbow (90 degrees default)"""
+    outer_dia = inner_dia + (2 * wall_thickness)
+    
+    # Create Torus for outer wall
+    # Major radius = bend_radius, Minor radius = outer_dia/2
+    torus_outer = Part.makeTorus(bend_radius, outer_dia/2)
+    
+    # Create Torus for inner hole
+    torus_inner = Part.makeTorus(bend_radius, inner_dia/2)
+    
+    # Create the hollow pipe
+    pipe = torus_outer.cut(torus_inner)
+    
+    # Cut the torus to get just the segment (angle)
+    # We use a large box to cut away the unwanted part of the torus
+    # This is a simplification; for exact angles, we intersect with a wedge.
+    # For a clean 90 degree, we can use a huge box positioned to keep only one quadrant.
+    
+    # Alternative: Use FreeCAD's Revolution
+    # Create circle face
+    c1 = Part.makeCircle(outer_dia/2, App.Vector(bend_radius, 0, 0), App.Vector(0, 1, 0))
+    c2 = Part.makeCircle(inner_dia/2, App.Vector(bend_radius, 0, 0), App.Vector(0, 1, 0))
+    
+    face_outer = Part.Face(Part.Wire(c1))
+    face_inner = Part.Face(Part.Wire(c2))
+    face = face_outer.cut(face_inner)
+    
+    # Revolve around Z axis
+    elbow = face.revolve(App.Vector(0,0,0), App.Vector(0,0,1), angle)
+    
+    obj = doc.addObject("Part::Feature", "PipeElbow")
+    obj.Shape = elbow
+    doc.recompute()
+    print(f"✓ Pipe Elbow: ID={inner_dia}mm, Angle={angle}°")
+    return elbow
 
 # ============================================================================
 # TEMPLATE LIST
@@ -1509,10 +1645,11 @@ TEMPLATES = {
     'shaft_collar': shaft_collar,
     'chamfered_cylinder': chamfered_cylinder,
     
-    # Gears & Motion (3)
+    # Gears & Motion (4) - Updated
     'spur_gear': spur_gear,
     'pulley': pulley,
     'sprocket': sprocket,
+    'rack_gear': rack_gear,             # NEW
     
     # Ribs & Supports (2)
     'support_rib': support_rib,
@@ -1530,10 +1667,12 @@ TEMPLATES = {
     't_slot_extrusion': t_slot_extrusion,
     'v_slot_extrusion': v_slot_extrusion,
     
-    # Common Parts (3)
+    # Common Parts (5) - Updated
     'washer': washer,
     'bushing': bushing,
     'spacer': spacer,
+    'hex_bolt': hex_bolt,               # NEW
+    'bearing_radial': bearing_radial,   # NEW
     
     # Patterns (2) - Note: these operate on existing shapes
     'bolt_circle_pattern': bolt_circle_pattern,
@@ -1545,6 +1684,9 @@ TEMPLATES = {
     
     # Flanges (1)
     'circular_flange': circular_flange,
+
+    # Piping (1) - New Category
+    'pipe_elbow': pipe_elbow,           # NEW
     
     # Additional Features (4)
     'handle_grip': handle_grip,
@@ -1555,7 +1697,6 @@ TEMPLATES = {
     'box_with_hole': box_with_hole,
     'plate_with_holes': plate_with_holes,
 }
-
 # Total: 75 templates
 # 
 # Categories:
@@ -1565,14 +1706,15 @@ TEMPLATES = {
 # - Brackets/mounts: 7
 # - Structural: 3
 # - Shafts: 6
-# - Gears/motion: 3
+# - Gears/motion: 4
 # - Supports: 2
 # - Fasteners: 2
 # - Enclosure features: 2
 # - Extrusions: 2
-# - Standard parts: 3
+# - Standard parts: 5
 # - Patterns: 2
 # - Enclosures: 2
 # - Flanges: 1
+# - Piping: 1
 # - Misc features: 4
 # - Complex assemblies: 3

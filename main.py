@@ -40,6 +40,7 @@ if GEMINI_API_KEY:
 
 # Template definitions with parameters
 TEMPLATE_CATALOG = {
+    # --- Primitive Solids ---
     "cube": {"params": ["size"], "defaults": {"size": 50}},
     "cuboid": {"params": ["length", "width", "height"], "defaults": {"length": 100, "width": 50, "height": 30}},
     "cylinder": {"params": ["radius", "height"], "defaults": {"radius": 25, "height": 100}},
@@ -47,16 +48,56 @@ TEMPLATE_CATALOG = {
     "cone": {"params": ["radius1", "radius2", "height"], "defaults": {"radius1": 50, "radius2": 20, "height": 100}},
     "torus": {"params": ["radius1", "radius2"], "defaults": {"radius1": 50, "radius2": 10}},
     "tube": {"params": ["outer_radius", "inner_radius", "height"], "defaults": {"outer_radius": 30, "inner_radius": 20, "height": 100}},
+    "rectangular_tube": {"params": ["length", "width", "height", "wall_thickness"], "defaults": {"length": 100, "width": 50, "height": 100, "wall_thickness": 5}},
+    "wedge": {"params": ["length", "width", "height"], "defaults": {"length": 50, "width": 50, "height": 50}},
+    "prism": {"params": ["sides", "radius", "height"], "defaults": {"sides": 6, "radius": 50, "height": 100}},
+    "pyramid": {"params": ["base_length", "base_width", "height", "sides"], "defaults": {"base_length": 100, "base_width": 100, "height": 80, "sides": 4}},
+    "filleted_box": {"params": ["length", "width", "height", "fillet_radius"], "defaults": {"length": 100, "width": 80, "height": 50, "fillet_radius": 10}},
+
+    # --- Plates & Bars ---
     "plate": {"params": ["length", "width", "thickness"], "defaults": {"length": 100, "width": 80, "thickness": 10}},
     "rod": {"params": ["diameter", "length"], "defaults": {"diameter": 20, "length": 100}},
     "ring": {"params": ["outer_diameter", "inner_diameter", "thickness"], "defaults": {"outer_diameter": 60, "inner_diameter": 40, "thickness": 10}},
-    "pyramid": {"params": ["base_length", "base_width", "height", "sides"], "defaults": {"base_length": 100, "base_width": 100, "height": 80, "sides": 4}},
-    "prism": {"params": ["sides", "radius", "height"], "defaults": {"sides": 6, "radius": 50, "height": 100}},
-    "filleted_box": {"params": ["length", "width", "height", "fillet_radius"], "defaults": {"length": 100, "width": 80, "height": 50, "fillet_radius": 10}},
+
+    # --- Structural Profiles ---
+    "i_beam": {"params": ["length", "height", "width", "web_thickness", "flange_thickness"], "defaults": {"length": 200, "height": 100, "width": 50, "web_thickness": 5, "flange_thickness": 8}},
+    "c_channel": {"params": ["length", "height", "width", "thickness"], "defaults": {"length": 200, "height": 100, "width": 50, "thickness": 5}},
+    "angle_iron": {"params": ["length", "leg1_length", "leg2_length", "thickness"], "defaults": {"length": 200, "leg1_length": 50, "leg2_length": 50, "thickness": 5}},
+    "t_slot_extrusion": {"params": ["length", "size"], "defaults": {"length": 200, "size": 20}}, # 2020 profile default
+
+    # --- Brackets & Mounting ---
     "l_bracket": {"params": ["length", "width", "height", "thickness"], "defaults": {"length": 80, "width": 60, "height": 50, "thickness": 8}},
     "u_bracket": {"params": ["length", "width", "height", "thickness"], "defaults": {"length": 100, "width": 60, "height": 50, "thickness": 8}},
+    "z_bracket": {"params": ["length", "width", "height", "thickness", "offset"], "defaults": {"length": 50, "width": 40, "height": 40, "thickness": 5, "offset": 20}},
     "mounting_plate": {"params": ["length", "width", "thickness", "hole_diameter", "hole_pattern"], "defaults": {"length": 200, "width": 150, "thickness": 10, "hole_diameter": 8, "hole_pattern": "4_corner"}},
     "motor_mount_plate": {"params": ["motor_size", "mounting_thickness", "base_size"], "defaults": {"motor_size": "NEMA23", "mounting_thickness": 10, "base_size": 90}},
+
+    # --- Gears & Motion (Updated with Rack Gear) ---
+    "spur_gear": {"params": ["module", "teeth", "thickness"], "defaults": {"module": 1, "teeth": 20, "thickness": 5}},
+    "rack_gear": {"params": ["length", "width", "height", "module"], "defaults": {"length": 100, "width": 10, "height": 10, "module": 1}},
+    "pulley": {"params": ["diameter", "width", "shaft_diameter"], "defaults": {"diameter": 50, "width": 10, "shaft_diameter": 8}},
+    "sprocket": {"params": ["teeth", "pitch", "thickness"], "defaults": {"teeth": 20, "pitch": 12.7, "thickness": 5}},
+
+    # --- Common Parts (Updated with Hex Bolt & Bearing) ---
+    "hex_bolt": {"params": ["size", "length"], "defaults": {"size": 6, "length": 30}}, 
+    "bearing_radial": {"params": ["inner_dia", "outer_dia", "width"], "defaults": {"inner_dia": 8, "outer_dia": 22, "width": 7}},
+    "washer": {"params": ["inner_diameter", "outer_diameter", "thickness"], "defaults": {"inner_diameter": 8, "outer_diameter": 16, "thickness": 1.5}},
+    "bushing": {"params": ["inner_diameter", "outer_diameter", "length", "flange_width"], "defaults": {"inner_diameter": 10, "outer_diameter": 14, "length": 20, "flange_width": 2}},
+    "spacer": {"params": ["inner_diameter", "outer_diameter", "length"], "defaults": {"inner_diameter": 5, "outer_diameter": 10, "length": 10}},
+
+    # --- Piping (New Category) ---
+    "pipe_elbow": {"params": ["inner_dia", "wall_thickness", "bend_radius", "angle"], "defaults": {"inner_dia": 20, "wall_thickness": 3, "bend_radius": 30, "angle": 90}},
+    "circular_flange": {"params": ["outer_diameter", "inner_diameter", "thickness", "hole_count"], "defaults": {"outer_diameter": 100, "inner_diameter": 50, "thickness": 10, "hole_count": 6}},
+
+    # --- Enclosures & Electronics ---
+    "electronics_box": {"params": ["length", "width", "height", "wall_thickness"], "defaults": {"length": 100, "width": 80, "height": 50, "wall_thickness": 3}},
+    "rectangular_enclosure": {"params": ["length", "width", "height", "wall_thickness", "lid_thickness"], "defaults": {"length": 120, "width": 80, "height": 40, "wall_thickness": 2, "lid_thickness": 2}},
+    "heatsink_finned": {"params": ["length", "width", "base_height", "fin_height", "fin_count"], "defaults": {"length": 40, "width": 40, "base_height": 2, "fin_height": 10, "fin_count": 10}},
+    
+    # --- Cutout Operations (Negatives) ---
+    "usb_c_cutout": {"params": ["clearance"], "defaults": {"clearance": 0.2}},
+    "through_hole": {"params": ["radius"], "defaults": {"radius": 5}},
+    "blind_hole": {"params": ["radius", "depth"], "defaults": {"radius": 5, "depth": 10}},
 }
 
 
