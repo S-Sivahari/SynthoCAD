@@ -1,41 +1,77 @@
-# Natural Language to FreeCAD 3D Model Generator
+# Natural Language CAD Generator with LLM
 
-Complete system for generating 3D CAD models from natural language descriptions.
+🤖 Generate 3D CAD models using natural language powered by Google Gemini AI
+
+## ✨ Features
+
+- 🗣️ **Natural Language Input** - Describe your part in plain English
+- 🤖 **AI-Powered** - Uses Google Gemini 2.5 Flash (FREE API)
+- 📦 **75 Pre-built Templates** - Cubes, cylinders, brackets, gears, and more
+- 🔧 **Parametric Design** - All templates are fully parametric
+- 🔄 **Multi-Part Assembly** - Combine and position multiple components
+- 📤 **STEP Export** - Automatic export to industry-standard STEP format
+- 🖥️ **FreeCAD Integration** - Models open directly in FreeCAD GUI
 
 ## 📁 Project Structure
 
 ```
 solidworks_v2/
-├── launcher.py           # FreeCAD initialization & GUI launcher
-├── templates.py          # 75 parametric shape templates
-├── combiner.py           # Positioning, transforming & combining parts
-├── run_with_freecad_python.py  # Execution wrapper
-├── example.py            # Basic template usage examples
-├── combiner_example.py   # Combiner system examples
-├── complex_design.py     # Complex assembly demo
-├── requirements.txt      # Python dependencies for NLP
-├── .env.example          # API keys template
+├── main.py              # LLM interface & conversation handler
+├── launcher.py          # FreeCAD initialization & GUI launcher
+├── templates.py         # 75 parametric shape templates
+├── combiner.py          # Position, transform & combine shapes
+├── .env                 # Gemini API key (create from .env.example)
+├── .env.example         # API key template
+├── .gitignore           # Git exclusions
+├── generated_models/    # Generated Python scripts (timestamped)
+├── stepfiles/           # Exported STEP files
 └── README.md            # This file
 ```
 
 ## 🚀 Quick Start
 
-### Run Basic Example
+### 1. Prerequisites
+
+- **FreeCAD 1.0** installed at `C:\Program Files\FreeCAD 1.0\`
+- **Python 3.x** (for running the generator)
+- **Google Gemini API Key** (free from [Google AI Studio](https://makersuite.google.com/app/apikey))
+
+### 2. Setup
+
+1. Clone the repository:
 ```bash
-python run_with_freecad_python.py example.py
+git clone https://github.com/S-Sivahari/CAD-Compiler.git
+cd solidworks_v2
 ```
 
-### Run Combiner Example
+2. Create `.env` file with your Gemini API key:
 ```bash
-python run_with_freecad_python.py combiner_example.py
+GEMINI_API_KEY=your_api_key_here
 ```
 
-### Run Complex Design
+3. Install Python dependencies:
 ```bash
-python run_with_freecad_python.py complex_design.py
+pip install requests
 ```
 
-## 📚 Template Library (75 Templates)
+### 3. Run the Generator
+
+```bash
+python main.py
+```
+
+### 4. Create Your Model
+
+```
+You: create a motor mount for NEMA23
+🤖: {"ready": true, "template": "motor_mount_plate", "params": {...}}
+✓ Generating motor_mount_plate...
+✓ Script saved: generated_models/motor_mount_plate_20260203_143052.py
+✓ Launching FreeCAD...
+✓ Exported: stepfiles/motor_mount_plate_model.step
+```
+
+## 📚 Available Templates (75 Total)
 
 ### Primitives (15)
 - cube, cuboid, cylinder, sphere, cone, torus, wedge
@@ -92,6 +128,8 @@ python run_with_freecad_python.py complex_design.py
 
 ## 🔧 Combiner System
 
+Use `combiner.py` to create multi-part assemblies:
+
 ### Positioning
 ```python
 translate(shape, x=10, y=20, z=30)
@@ -114,127 +152,87 @@ circular_pattern(shape, center=(0,0,0), count=8, angle=360)
 grid_pattern(shape, rows=3, cols=4, row_spacing=30, col_spacing=40)
 ```
 
-### Assembly Builder
-```python
-assembly = Assembly("MyAssembly")
-assembly.add_part(base_plate, "Base")
-assembly.add_part(bracket, "Bracket")
-result = assembly.combine_all('union')
-```
-
-## 🤖 Next Step: LLM Integration
-
-### What You Need to Build:
-1. **OpenRouter API Connector**
-   - Use Llama 70B model
-   - Send natural language input
-   - Receive template + parameters
-
-2. **Prompt System**
-   - List all 75 templates with parameters
-   - Handle dimension extraction
-   - Manage conversation for missing params
-
-3. **Execution Pipeline**
-   - Parse LLM JSON response
-   - Call appropriate templates
-   - Use combiner for multi-part designs
-   - Generate and open FreeCAD model
-
-### LLM Task (EASY for Llama 70B):
-```
-Input: "I need a NEMA23 motor mount with 4 M6 bolt holes"
-
-LLM Output:
-{
-  "templates": [
-    {
-      "name": "motor_mount_plate",
-      "params": {
-        "motor_size": "NEMA23",
-        "mounting_thickness": 10,
-        "base_size": 90
-      }
-    },
-    {
-      "name": "bolt_circle_pattern",
-      "params": {
-        "bolt_diameter": 6.5,
-        "bolt_circle_diameter": 50,
-        "num_bolts": 4
-      },
-      "operation": "cut",
-      "target": "motor_mount_plate"
-    }
-  ]
-}
-```
-
-## 📤 Output Formats
-
-### STEP File (for SolidWorks)
-```python
-export_step(shape, "my_model.step")
-```
-
-All models automatically export to STEP format compatible with SolidWorks.
-
-## 💡 Usage Examples
+## 💡 Example Conversations
 
 ### Simple Part
-```python
-from templates import *
-from launcher import create_document, open_gui
-
-doc = create_document("Simple")
-box = cuboid(doc, length=100, width=80, height=50)
-open_gui(doc)
+```
+You: create a cube 50mm
+🤖: {"ready": true, "template": "cube", "params": {"size": 50}}
 ```
 
-### Combined Assembly
-```python
-from templates import *
-from combiner import *
-from launcher import create_document, open_gui
-
-doc = create_document("Assembly")
-
-base = plate(doc, length=150, width=100, thickness=10)
-bracket = l_bracket(doc, length=80, width=60, height=50, thickness=8)
-translate(bracket, x=-60, y=-30, z=10)
-
-assembly = combine(base, bracket, 'union')
-
-part_obj = doc.addObject("Part::Feature", "Assembly")
-part_obj.Shape = assembly
-doc.recompute()
-
-open_gui(doc)
+### Part with Missing Info
+```
+You: I need a cylinder
+🤖: {"ready": false, "message": "What should the radius be? (in mm)"}
+You: 30mm
+🤖: {"ready": false, "message": "What should the height be? (in mm)"}
+You: 100mm
+🤖: {"ready": true, "template": "cylinder", "params": {"radius": 30, "height": 100}}
 ```
 
-## 🎯 Current Status
+### Complex Part
+```
+You: create a motor mount for NEMA23
+🤖: {"ready": true, "template": "motor_mount_plate", "params": {...}}
+```
 
-- ✅ 75 parametric templates
-- ✅ FreeCAD launcher & GUI integration
-- ✅ STEP export for SolidWorks
-- ✅ Combiner system (positioning, boolean ops, patterns)
-- ✅ Assembly builder
-- ⏳ **Next: Your LLM integration with OpenRouter**
+## 🎯 How It Works
+
+1. **You describe** the part in natural language
+2. **Gemini AI** identifies the matching template and extracts parameters
+3. **System generates** Python script calling the template
+4. **FreeCAD renders** the model and opens GUI
+5. **STEP file** automatically exported to `stepfiles/`
+
+## 📂 Output Files
+
+- **Generated Scripts**: `generated_models/template_YYYYMMDD_HHMMSS.py`
+- **STEP Exports**: `stepfiles/template_model.step`
+
+## 🔒 Security
+
+- `.env` file contains your API key - **NEVER commit this to git**
+- `.gitignore` is configured to exclude sensitive files
+- Use `.env.example` as a template for others
+
+## 🛠️ Technical Details
+
+### Architecture
+- **Templates**: Pre-built parametric CAD functions (no code generation needed)
+- **LLM Role**: Pattern matching + parameter extraction only
+- **Combiner**: Boolean operations and transformations
+- **Launcher**: FreeCAD process management
+
+### Why This Works
+- ✅ **Reliable**: All geometry code is pre-tested
+- ✅ **Fast**: LLM only does simple JSON output
+- ✅ **Scalable**: Easy to add new templates
+- ✅ **Free**: Gemini API has generous free tier
 
 ## 📝 Notes
 
-- FreeCAD must be installed separately
-- Templates use FreeCAD's Python API
-- All dimensions in millimeters
-- Models only exist in memory (no FCStd files unless saved)
-- STEP files ready for import to SolidWorks
+- All dimensions are in millimeters
+- FreeCAD 1.0 required (adjust path in scripts if different version)
+- Models only exist in memory until exported
+- STEP files are compatible with SolidWorks, Fusion 360, etc.
+
+## 🤝 Contributing
+
+1. Add new templates to `templates.py`
+2. Update `TEMPLATE_CATALOG` in `main.py`
+3. Test with natural language descriptions
+4. Submit pull request
+
+## 📄 License
+
+This project is open source and available for use.
 
 ## 🔗 Resources
 
-- FreeCAD: https://www.freecad.org/
-- OpenRouter API: https://openrouter.ai/
-- Standard parts: McMaster-Carr, GrabCAD
+- [FreeCAD Official Site](https://www.freecad.org/)
+- [Google AI Studio](https://makersuite.google.com/app/apikey)
+- [STEP File Format](https://en.wikipedia.org/wiki/ISO_10303)
 
 ---
 
-**Ready for LLM integration! The template system is complete and waiting for your natural language input.**
+**Made with ❤️ using AI + FreeCAD**
