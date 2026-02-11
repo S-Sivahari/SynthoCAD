@@ -1,10 +1,12 @@
 import json
 from pathlib import Path
+from typing import Union, Dict, Any
 from jsonschema import validate, ValidationError
 
 
-def validate_json(json_input):
-    schema_path = Path(__file__).parent / "core" / "scl_schema.json"
+def validate_json(json_input: Union[str, Dict[str, Any]]) -> bool:
+    schema_path = Path(__file__).parent.parent / "core" / "scl_schema.json"
+    
     with open(schema_path, 'r') as f:
         schema = json.load(f)    
     if isinstance(json_input, str):

@@ -1,0 +1,74 @@
+{
+  "final_name": "Tube",
+  "units": "mm",
+  "coordinate_system": {
+    "Origin": [0, 0, 0],
+    "X Axis": [1, 0, 0],
+    "Y Axis": [0, 1, 0]
+  },
+  "parts": {
+    "Body1": {
+      "profiles": {
+        "Profile1": {
+          "sketch_plane": {
+            "origin": [0, 0, 0],
+            "x_dir": [1, 0, 0],
+            "y_dir": [0, 1, 0]
+          },
+          "profile_id": "revolved_tube",
+          "loops": [
+            {
+              "loop_id": "outer_profile",
+              "curves": [
+                {
+                  "curve_id": "line_1",
+                  "type": "line",
+                  "start_point": [0, 0],
+                  "end_point": [25, 0]
+                },
+                {
+                  "curve_id": "line_2",
+                  "type": "line",
+                  "start_point": [25, 0],
+                  "end_point": [25, 100]
+                },
+                {
+                  "curve_id": "line_3",
+                  "type": "line",
+                  "start_point": [25, 100],
+                  "end_point": [20, 100]
+                },
+                {
+                  "curve_id": "line_4",
+                  "type": "line",
+                  "start_point": [20, 100],
+                  "end_point": [20, 0]
+                },
+                {
+                  "curve_id": "line_5",
+                  "type": "line",
+                  "start_point": [20, 0],
+                  "end_point": [0, 0]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "operations": [
+        {
+          "operation_id": "revolve_1",
+          "type": "revolve",
+          "profile_id": "Profile1",
+          "axis_origin": [0, 0, 0],
+          "axis_direction": [0, 0, 1],
+          "angle": 360,
+          "operation_type": "NewBodyFeatureOperation"
+        }
+      ]
+    }
+  },
+  "_description": "Hollow cylindrical tube with 25mm outer radius, 20mm inner radius, 100mm height",
+  "_template_category": "basic",
+  "_editable_parameters": ["outer_radius", "inner_radius", "height"]
+}

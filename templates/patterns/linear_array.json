@@ -1,0 +1,123 @@
+{
+  "final_name": "LinearArray",
+  "units": "mm",
+  "coordinate_system": {
+    "Origin": [0, 0, 0],
+    "X Axis": [1, 0, 0],
+    "Y Axis": [0, 1, 0]
+  },
+  "parts": {
+    "Body1": {
+      "profiles": {
+        "Profile1": {
+          "sketch_plane": {
+            "origin": [0, 0, 0],
+            "x_dir": [1, 0, 0],
+            "y_dir": [0, 1, 0]
+          },
+          "profile_id": "base_plate",
+          "loops": [
+            {
+              "loop_id": "rectangle",
+              "curves": [
+                {
+                  "curve_id": "line_1",
+                  "type": "line",
+                  "start_point": [0, 0],
+                  "end_point": [160, 0]
+                },
+                {
+                  "curve_id": "line_2",
+                  "type": "line",
+                  "start_point": [160, 0],
+                  "end_point": [160, 40]
+                },
+                {
+                  "curve_id": "line_3",
+                  "type": "line",
+                  "start_point": [160, 40],
+                  "end_point": [0, 40]
+                },
+                {
+                  "curve_id": "line_4",
+                  "type": "line",
+                  "start_point": [0, 40],
+                  "end_point": [0, 0]
+                }
+              ]
+            }
+          ]
+        },
+        "Profile2": {
+          "sketch_plane": {
+            "origin": [0, 0, 5],
+            "x_dir": [1, 0, 0],
+            "y_dir": [0, 1, 0]
+          },
+          "profile_id": "slot_profile",
+          "loops": [
+            {
+              "loop_id": "slot",
+              "curves": [
+                {
+                  "curve_id": "line_1",
+                  "type": "line",
+                  "start_point": [15, 15],
+                  "end_point": [25, 15]
+                },
+                {
+                  "curve_id": "line_2",
+                  "type": "line",
+                  "start_point": [25, 15],
+                  "end_point": [25, 25]
+                },
+                {
+                  "curve_id": "line_3",
+                  "type": "line",
+                  "start_point": [25, 25],
+                  "end_point": [15, 25]
+                },
+                {
+                  "curve_id": "line_4",
+                  "type": "line",
+                  "start_point": [15, 25],
+                  "end_point": [15, 15]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "operations": [
+        {
+          "operation_id": "extrude_1",
+          "type": "extrude",
+          "profile_id": "Profile1",
+          "distance": 5,
+          "direction": [0, 0, 1],
+          "operation_type": "NewBodyFeatureOperation"
+        },
+        {
+          "operation_id": "cut_slots",
+          "type": "extrude",
+          "profile_id": "Profile2",
+          "distance": -5,
+          "direction": [0, 0, -1],
+          "operation_type": "CutFeatureOperation",
+          "pattern": {
+            "type": "linear",
+            "count": 8,
+            "spacing": 20,
+            "direction": [1, 0, 0]
+          }
+        }
+      ]
+    }
+  },
+  "_description": "Linear pattern template - 8 square slots spaced 20mm apart",
+  "_template_category": "patterns",
+  "_pattern_type": "linear",
+  "_editable_parameters": ["slot_size", "slot_spacing", "slot_count", "base_length", "base_width", "base_thickness"],
+  "_engineering_note": "Useful for ventilation grilles, cable routing, or weight reduction",
+  "_manufacturing_notes": "Ensure adequate spacing between features to avoid weak walls"
+}

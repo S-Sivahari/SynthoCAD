@@ -1,0 +1,87 @@
+{
+  "final_name": "Flange",
+  "units": "mm",
+  "coordinate_system": {
+    "Origin": [0, 0, 0],
+    "X Axis": [1, 0, 0],
+    "Y Axis": [0, 1, 0]
+  },
+  "parts": {
+    "Body1": {
+      "profiles": {
+        "Profile1": {
+          "sketch_plane": {
+            "origin": [0, 0, 0],
+            "x_dir": [1, 0, 0],
+            "y_dir": [0, 1, 0]
+          },
+          "profile_id": "flange_disk",
+          "loops": [
+            {
+              "loop_id": "outer_circle",
+              "curves": [
+                {
+                  "curve_id": "circle_1",
+                  "type": "circle",
+                  "center": [0, 0],
+                  "radius": 50
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "operations": [
+        {
+          "operation_id": "extrude_1",
+          "type": "extrude",
+          "profile_id": "Profile1",
+          "distance": 10,
+          "direction": [0, 0, 1],
+          "operation_type": "NewBodyFeatureOperation"
+        },
+        {
+          "operation_id": "center_hole",
+          "type": "hole",
+          "hole_type": "Simple",
+          "diameter": 25,
+          "depth": 10,
+          "position": [0, 0, 0],
+          "direction": [0, 0, 1],
+          "operation_type": "CutFeatureOperation"
+        },
+        {
+          "operation_id": "bolt_holes",
+          "type": "hole",
+          "hole_type": "Simple",
+          "diameter": 5.5,
+          "depth": 10,
+          "position": [35, 0, 0],
+          "direction": [0, 0, 1],
+          "operation_type": "CutFeatureOperation",
+          "pattern": {
+            "type": "polar",
+            "count": 6,
+            "center": [0, 0, 0],
+            "total_angle": 360,
+            "axis": [0, 0, 1]
+          }
+        }
+      ],
+      "features": [
+        {
+          "feature_id": "chamfer_1",
+          "type": "chamfer",
+          "distance": 1.5,
+          "edge_selector": ">Z",
+          "_comment": "Chamfer on top outer edge"
+        }
+      ]
+    }
+  },
+  "_description": "Circular flange 100mm diameter with 25mm center hole and 6× M5 bolt holes on 70mm PCD",
+  "_template_category": "mechanical",
+  "_editable_parameters": ["outer_diameter", "thickness", "center_hole_diameter", "bolt_hole_diameter", "bolt_circle_diameter", "bolt_count"],
+  "_engineering_note": "Standard flange pattern with ISO M5 clearance holes (5.5mm)",
+  "_manufacturing_notes": "Consider adding counterbore for bolt heads if needed"
+}

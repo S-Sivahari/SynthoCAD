@@ -1,0 +1,86 @@
+{
+  "final_name": "BoltCirclePattern",
+  "units": "mm",
+  "coordinate_system": {
+    "Origin": [0, 0, 0],
+    "X Axis": [1, 0, 0],
+    "Y Axis": [0, 1, 0]
+  },
+  "parts": {
+    "Body1": {
+      "profiles": {
+        "Profile1": {
+          "sketch_plane": {
+            "origin": [0, 0, 0],
+            "x_dir": [1, 0, 0],
+            "y_dir": [0, 1, 0]
+          },
+          "profile_id": "base_plate",
+          "loops": [
+            {
+              "loop_id": "rectangle",
+              "curves": [
+                {
+                  "curve_id": "line_1",
+                  "type": "line",
+                  "start_point": [-50, -50],
+                  "end_point": [50, -50]
+                },
+                {
+                  "curve_id": "line_2",
+                  "type": "line",
+                  "start_point": [50, -50],
+                  "end_point": [50, 50]
+                },
+                {
+                  "curve_id": "line_3",
+                  "type": "line",
+                  "start_point": [50, 50],
+                  "end_point": [-50, 50]
+                },
+                {
+                  "curve_id": "line_4",
+                  "type": "line",
+                  "start_point": [-50, 50],
+                  "end_point": [-50, -50]
+                }
+              ]
+            }
+          ]
+        }
+      },
+      "operations": [
+        {
+          "operation_id": "extrude_1",
+          "type": "extrude",
+          "profile_id": "Profile1",
+          "distance": 5,
+          "direction": [0, 0, 1],
+          "operation_type": "NewBodyFeatureOperation"
+        },
+        {
+          "operation_id": "bolt_holes",
+          "type": "hole",
+          "hole_type": "Simple",
+          "diameter": 5.5,
+          "depth": 10,
+          "position": [30, 0, 0],
+          "direction": [0, 0, 1],
+          "operation_type": "CutFeatureOperation",
+          "pattern": {
+            "type": "polar",
+            "count": 6,
+            "center": [0, 0, 0],
+            "total_angle": 360,
+            "axis": [0, 0, 1]
+          }
+        }
+      ]
+    }
+  },
+  "_description": "Polar pattern template - 6 holes equally spaced on a 60mm diameter circle",
+  "_template_category": "patterns",
+  "_pattern_type": "polar",
+  "_editable_parameters": ["hole_diameter", "bolt_circle_radius", "hole_count", "base_thickness"],
+  "_engineering_note": "Common pattern for mounting plates and flanges"
+}

@@ -1,13 +1,15 @@
 import json
 import math
 from pathlib import Path
+from typing import Optional
 
 class CadQueryGenerator:
-    def __init__(self, json_data):
+    def __init__(self, json_data, output_name: Optional[str] = None):
         if isinstance(json_data, str):
             self.data = json.loads(json_data)
         else:
             self.data = json_data
+        self.output_name = output_name
         self.code_lines = []
         self.indent = 0
         
@@ -30,12 +32,17 @@ class CadQueryGenerator:
             self.generate_part(part_data, part_num, result_var)
             
         units = self.data.get("units", "mm")
-        final_name = self.data.get("final_name", "output")
-        if not final_name or final_name.strip() == "":
-            final_name = "output"
+        
+        if self.output_name:
+            safe_name = self.output_name
+        else:
+            final_name = self.data.get("final_name", "output")
+            if not final_name or final_name.strip() == "":
+                final_name = "output"
+            safe_name = final_name.replace(' ', '_').replace('/', '_')
         
         self.add_line("")
-        self.add_line(f"cq.exporters.export({result_var}, '{final_name}.step')")
+        self.add_line(f"cq.exporters.export({result_var}, '{safe_name}.step')")
         
         return "\n".join(self.code_lines)
         
