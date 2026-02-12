@@ -44,6 +44,11 @@ class JSONValidationError(SynthoCadError):
         super().__init__(ErrorCode.JSON_VALIDATION_FAILED, message, details)
 
 
+class JSONGenerationError(SynthoCadError):
+    def __init__(self, message: str, details: Optional[Dict] = None):
+        super().__init__(ErrorCode.JSON_GENERATION_FAILED, message, details)
+
+
 class CodeGenerationError(SynthoCadError):
     def __init__(self, message: str, details: Optional[Dict] = None):
         super().__init__(ErrorCode.CODEGEN_FAILED, message, details)

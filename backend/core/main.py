@@ -1,11 +1,17 @@
 import json
+import os
+import re
 import sys
 import subprocess
 from pathlib import Path
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, Tuple, Optional
 import logging
 
 sys.path.append(str(Path(__file__).parent.parent))
+
+# Load .env for API keys
+from dotenv import load_dotenv
+load_dotenv(str(Path(__file__).parent.parent.parent / ".env"))
 
 from validators.prompt_validator import PromptValidator
 from validators.json_validator import validate_json
@@ -13,9 +19,81 @@ from core.cadquery_generator import CadQueryGenerator
 from services.parameter_extractor import ParameterExtractor
 from services.parameter_updater import ParameterUpdater
 from services.freecad_instance_generator import FreeCADInstanceGenerator
+from services.gemini_service import call_gemini
 from utils.errors import *
 from utils.logger import pipeline_logger
 from core import config
+
+
+# LLM SYSTEM PROMPT - Instructions for converting natural language to SCL JSON
+LLM_SYSTEM_PROMPT = """You are a CAD design assistant. Your job is to convert natural language descriptions into valid SCL JSON format.
+
+CRITICAL RULES:
+1. Output ONLY valid JSON - no markdown, no code blocks, no explanations before or after
+2. Use the SCL schema located at: backend/core/scl_schema.json
+3. The user's input may have missing values or extra details - YOU must figure out reasonable defaults
+4. Always include "units" field (default to "mm" if not specified)
+5. First operation must use "NewBodyFeatureOperation"
+6. Use normalized coordinates (0.0 to 1.0) in sketches, then use sketch_scale to size it correctly
+
+REQUIRED JSON STRUCTURE:
+{
+  "final_name": "PartName",
+  "final_shape": "cylinder",
+  "units": "mm",
+  "parts": {
+    "part_1": {
+      "coordinate_system": {
+        "Euler Angles": [0.0, 0.0, 0.0],
+        "Translation Vector": [0.0, 0.0, 0.0]
+      },
+      "sketch": {
+        "face_1": {
+          "loop_1": {
+            "circle_1": {"Center": [0.5, 0.5], "Radius": 0.5}
+          }
+        }
+      },
+      "extrusion": {
+        "extrude_depth_towards_normal": 1.0,
+        "extrude_depth_opposite_normal": 0.0,
+        "sketch_scale": 20.0,
+        "operation": "NewBodyFeatureOperation"
+      },
+      "description": {
+        "name": "CylindricalPart",
+        "shape": "cylinder",
+        "length": 20.0,
+        "width": 20.0,
+        "height": 20.0
+      }
+    }
+  }
+}
+
+SKETCH ENTITIES YOU CAN USE:
+- Circle: {"Center": [x, y], "Radius": r}
+- Line: {"Start Point": [x1, y1], "End Point": [x2, y2]}  
+- Arc: {"Start Point": [x1, y1], "Mid Point": [xm, ym], "End Point": [x2, y2]}
+
+HOW TO HANDLE DIMENSIONS:
+- User says "10mm radius cylinder, 30mm tall"
+- Sketch: Circle with Center [0.5, 0.5], Radius 0.5 (normalized 0-1 range)
+- sketch_scale: 20.0 (this is the diameter = 2*radius)
+- extrude_depth_towards_normal: 1.5 (this ratio times sketch_scale gives 30mm height)
+- Description: length=20, width=20, height=30
+
+FEATURE TYPES:
+- "extrude" - for boxes, cylinders (circle + extrude), plates
+- "revolve" - for parts with rotational symmetry
+
+YOUR OUTPUT MUST:
+- Start with { and end with }
+- Be valid JSON that passes jsonschema validation
+- Match the SCL schema exactly (all required fields present, correct types)
+- Have reasonable values even if user input is vague
+
+DO NOT output markdown code blocks like ```json - just output the raw JSON."""
 
 
 class SynthoCadPipeline:
@@ -54,12 +132,102 @@ class SynthoCadPipeline:
         }
         
     def generate_json_from_prompt(self, prompt: str) -> Dict[str, Any]:
-        self.logger.info("Step 2: Generating JSON from prompt (LLM integration placeholder)")
+        """Step 2: Generate SCL JSON from natural language using LLM.
         
-        raise NotImplementedError(
-            "LLM integration not yet implemented. "
-            "Please use templates or provide JSON directly."
-        )
+        Following LLM_INTEGRATION_GUIDE.md:
+        - Uses system prompt template
+        - Loads relevant templates as examples
+        - Calls configured LLM (Gemini by default)
+        - Strips markdown and extracts JSON
+        """
+        self.logger.info("Step 2: Generating JSON from prompt via LLM")
+        
+        # Build system prompt following LLM_INTEGRATION_GUIDE.md
+        system_prompt = self._build_llm_system_prompt()
+        
+        # Load relevant template examples
+        templates = self._find_relevant_templates(prompt)
+        
+        # Build full prompt
+        examples_text = ""
+        if templates:
+            examples_text = "\n\nEXAMPLES:\n"
+            for i, t in enumerate(templates[:2], 1):
+                examples_text += f"\nExample {i}:\n{json.dumps(t, indent=2)}\n"
+        
+        full_prompt = f"{system_prompt}{examples_text}\n\nUSER REQUEST: {prompt}\n\nJSON output:"
+        
+        # Call LLM
+        try:
+            response_text = call_gemini(full_prompt, max_tokens=2048, temperature=0.1)
+            
+            # Strip markdown code blocks if present
+            cleaned_text = self._strip_markdown_json(response_text)
+            
+            # Parse JSON
+            json_data = json.loads(cleaned_text)
+            self.logger.info(f"LLM generated JSON for: {json_data.get('final_name', 'Unknown')}")
+            return json_data
+            
+        except json.JSONDecodeError as e:
+            self.logger.error(f"LLM returned invalid JSON: {e}")
+            raise JSONGenerationError(f"LLM returned invalid JSON: {str(e)}")
+        except Exception as e:
+            self.logger.error(f"LLM generation failed: {e}")
+            raise JSONGenerationError(f"LLM generation failed: {str(e)}")
+    
+    def _build_llm_system_prompt(self) -> str:
+        """Return the LLM system prompt for JSON generation."""
+        return LLM_SYSTEM_PROMPT
+    
+    def _find_relevant_templates(self, prompt: str) -> list:
+        """Load template examples relevant to the user's prompt."""
+        templates = []
+        prompt_lower = prompt.lower()
+        
+        template_map = {
+            ('cylinder', 'rod', 'pipe', 'round', 'circular'): 'basic/cylinder.json',
+            ('box', 'cube', 'block', 'plate', 'rectangular'): 'basic/box.json',
+            ('tube', 'hollow'): 'basic/tube.json',
+        }
+        
+        for keywords, template_file in template_map.items():
+            if any(kw in prompt_lower for kw in keywords):
+                template_path = config.TEMPLATES_DIR / template_file
+                if template_path.exists():
+                    with open(template_path, 'r') as f:
+                        templates.append(json.load(f))
+        
+        # Always include at least one example
+        if not templates:
+            default_template = config.TEMPLATES_DIR / 'basic' / 'cylinder.json'
+            if default_template.exists():
+                with open(default_template, 'r') as f:
+                    templates.append(json.load(f))
+        
+        return templates
+    
+    def _strip_markdown_json(self, text: str) -> str:
+        """Strip markdown code blocks and extract JSON from LLM response."""
+        text = text.strip()
+        
+        # Remove markdown code blocks
+        if text.startswith('```'):
+            lines = text.split('\n')
+            lines = lines[1:]  # Remove first line (```json or ```)
+            for i, line in enumerate(lines):
+                if line.strip() == '```':
+                    lines = lines[:i]
+                    break
+            text = '\n'.join(lines).strip()
+        
+        # Try to find JSON object if not starting with {
+        if not text.startswith('{'):
+            match = re.search(r'\{[\s\S]*\}', text)
+            if match:
+                text = match.group()
+        
+        return text
         
     def validate_json(self, json_data: Dict) -> bool:
         self.logger.info("Step 3: Validating JSON against SCL schema")
