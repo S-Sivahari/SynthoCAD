@@ -25,3 +25,16 @@ PROMPT_MAX_LENGTH = 5000
 EXECUTION_TIMEOUT = 60
 
 SUPPORTED_TEMPLATES = ["cylinder", "box", "tube", "l_bracket", "flange", "shaft"]
+
+# Cleanup Configuration
+CLEANUP_ENABLED = True
+CLEANUP_MAX_AGE_DAYS = 30  # Delete files older than 30 days
+CLEANUP_MAX_FILES_PER_TYPE = 100  # Keep max 100 files of each type
+CLEANUP_AUTO_RUN = False  # Auto cleanup on startup (set True for production)
+
+# Retry/Error Recovery Configuration
+RETRY_ENABLED = True
+RETRY_MAX_ATTEMPTS = 3  # Maximum retry attempts for LLM calls
+RETRY_INITIAL_DELAY = 1.0  # Initial delay in seconds
+RETRY_MAX_DELAY = 60.0  # Maximum delay between retries
+RETRY_EXPONENTIAL_BASE = 2.0  # Exponential backoff base

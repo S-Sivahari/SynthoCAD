@@ -6,6 +6,7 @@ sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from services.parameter_extractor import ParameterExtractor
 from services.parameter_updater import ParameterUpdater
+from core.main import SynthoCadPipeline
 from utils.logger import api_logger
 from utils.errors import ParameterUpdateError
 from core import config
@@ -14,6 +15,7 @@ from core import config
 bp = Blueprint('parameters', __name__)
 extractor = ParameterExtractor()
 updater = ParameterUpdater()
+pipeline = SynthoCadPipeline()  # For regeneration
 
 
 @bp.route('/extract/<filename>', methods=['GET'])
@@ -93,4 +95,78 @@ def update_parameters(filename):
         return jsonify({
             'error': True,
             'message': f'Failed to update parameters: {str(e)}'
+        }), 500
+
+
+@bp.route('/regenerate/<filename>', methods=['POST'])
+def regenerate_step(filename):
+    """
+    Regenerate STEP file after parameter updates and optionally open in FreeCAD.
+    
+    Request Body:
+    {
+        "parameters": {"radius": 15.0, "height": 30.0},
+        "open_freecad": true (optional, default: true)
+    }
+    """
+    py_file = config.PY_OUTPUT_DIR / filename
+    
+    if not py_file.exists():
+        return jsonify({
+            'error': True,
+            'message': f'Python file not found: {filename}'
+        }), 404
+        
+    data = request.get_json()
+    parameters = data.get('parameters', {})
+    open_freecad = data.get('open_freecad', True)
+    
+    if not parameters:
+        return jsonify({
+            'error': True,
+            'message': 'No parameters provided for update'
+        }), 400
+        
+    try:
+        # Validate and update parameters
+        for param_name, value in parameters.items():
+            is_valid, error_msg = updater.validate_parameter_value(param_name, value)
+            if not is_valid:
+                raise ParameterUpdateError(f"Invalid value for {param_name}: {error_msg}")
+                
+        updater.update_python_file(str(py_file), parameters)
+        
+        # Extract output name from filename (remove _generated.py suffix)
+        output_name = filename.replace('_generated.py', '').replace('.py', '')
+        
+        # Regenerate STEP file
+        api_logger.info(f"Regenerating {output_name} with updated parameters")
+        step_file = pipeline.regenerate_from_updated_python(
+            str(py_file), 
+            output_name, 
+            open_freecad=open_freecad
+        )
+        
+        api_logger.info(f"Successfully regenerated: {step_file}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Regenerated with {len(parameters)} updated parameters',
+            'py_file': str(py_file),
+            'step_file': step_file,
+            'updated_parameters': list(parameters.keys()),
+            'freecad_opened': open_freecad
+        }), 200
+        
+    except ParameterUpdateError as e:
+        api_logger.error(f"Parameter update error: {e.message}")
+        return jsonify({
+            'error': True,
+            'message': e.message
+        }), 400
+    except Exception as e:
+        api_logger.error(f"Regeneration failed: {str(e)}")
+        return jsonify({
+            'error': True,
+            'message': f'Failed to regenerate: {str(e)}'
         }), 500

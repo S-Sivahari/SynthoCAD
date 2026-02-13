@@ -1,1 +1,0 @@
-using mermaid website as a base example, build the frontend using react and tailwindcss. connect with the flask application in the backend

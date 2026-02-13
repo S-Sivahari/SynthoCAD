@@ -16,6 +16,7 @@ from services.parameter_extractor import ParameterExtractor
 from services.parameter_updater import ParameterUpdater
 from services.freecad_instance_generator import FreeCADInstanceGenerator
 from services.gemini_service import call_gemini
+from services.error_recovery_service import ErrorRecoveryService, RetryConfig, RetryableError
 from utils.errors import *
 from utils.logger import pipeline_logger
 from core import config
@@ -112,6 +113,15 @@ class SynthoCadPipeline:
         self.param_updater = ParameterUpdater()
         self.freecad = FreeCADInstanceGenerator()
         self.logger = pipeline_logger
+        
+        # Initialize error recovery service
+        self.error_recovery = ErrorRecoveryService(logger=pipeline_logger)
+        self.retry_config = RetryConfig(
+            max_attempts=config.RETRY_MAX_ATTEMPTS if hasattr(config, 'RETRY_MAX_ATTEMPTS') else 3,
+            initial_delay=config.RETRY_INITIAL_DELAY if hasattr(config, 'RETRY_INITIAL_DELAY') else 1.0,
+            max_delay=config.RETRY_MAX_DELAY if hasattr(config, 'RETRY_MAX_DELAY') else 60.0,
+            exponential_base=config.RETRY_EXPONENTIAL_BASE if hasattr(config, 'RETRY_EXPONENTIAL_BASE') else 2.0
+        )
         
     def validate_prompt(self, prompt: str) -> Dict[str, Any]:
         self.logger.info(f"Step 1: Validating prompt")
@@ -248,6 +258,7 @@ class SynthoCadPipeline:
         return True
         
     def generate_cadquery_code(self, json_data: Dict, output_name: str) -> str:
+        """Step 4: Generate CadQuery Python code from SCL JSON."""
         self.logger.info("Step 4: Generating CadQuery Python code")
         
         try:
@@ -262,22 +273,24 @@ class SynthoCadPipeline:
             return str(py_file)
             
         except Exception as e:
-            self.logger.error(f"Code generation failed: {str(e)}")
-            raise CodeGenerationError(f"Failed to generate CadQuery code: {str(e)}")
-            
+            raise CodeGenerationError(f"Code generation failed: {str(e)}")
+    
     def execute_cadquery_code(self, py_file: str, output_name: str) -> str:
+        """
+        Step 5: Execute CadQuery code with retry logic for transient failures.
+        """
         self.logger.info("Step 5: Executing CadQuery code to generate STEP")
         
-        py_path = Path(py_file)
-        if not py_path.is_absolute():
-            py_path = config.BASE_DIR / py_path
+        def _execute():
+            py_path = Path(py_file)
+            if not py_path.is_absolute():
+                py_path = config.BASE_DIR / py_path
+                
+            if not py_path.exists():
+                raise ExecutionError(f"Python file not found: {py_file}")
+                
+            step_file = config.STEP_OUTPUT_DIR / f"{output_name}.step"
             
-        if not py_path.exists():
-            raise ExecutionError(f"Python file not found: {py_file}")
-            
-        step_file = config.STEP_OUTPUT_DIR / f"{output_name}.step"
-        
-        try:
             result = subprocess.run(
                 [sys.executable, str(py_path)],
                 capture_output=True,
@@ -288,6 +301,9 @@ class SynthoCadPipeline:
             
             if result.returncode != 0:
                 self.logger.error(f"Execution failed: {result.stderr}")
+                # Check if it's a retryable error (e.g., resource temporarily unavailable)
+                if 'temporarily' in result.stderr.lower() or 'resource' in result.stderr.lower():
+                    raise RetryableError(f"Python execution failed (retryable): {result.stderr}")
                 raise ExecutionError(f"Python execution failed: {result.stderr}")
                 
             if not step_file.exists():
@@ -295,9 +311,22 @@ class SynthoCadPipeline:
                 
             self.logger.info(f"STEP file generated: {step_file}")
             return str(step_file)
-            
+        
+        try:
+            # Try with retry logic for retryable errors
+            if hasattr(config, 'RETRY_ENABLED') and config.RETRY_ENABLED:
+                return self.error_recovery.execute_with_retry(
+                    _execute,
+                    config=self.retry_config,
+                    operation_name="cadquery_execution"
+                )
+            else:
+                return _execute()
+                
         except subprocess.TimeoutExpired:
             raise ExecutionError(f"Execution timeout ({config.EXECUTION_TIMEOUT}s)")
+        except RetryableError as e:
+            raise ExecutionError(f"Execution error (retries exhausted): {str(e)}")
         except Exception as e:
             raise ExecutionError(f"Execution error: {str(e)}")
             
