@@ -25,6 +25,14 @@ backend/
 │   ├── json_validator.py           # Validate JSON against schema
 │   └── prompt_validator.py         # Validate user prompts
 │
+├── rag/                    # RAG System (Vector DB, Ingestion, Query)
+│   ├── db.py               # ChromaDB Client
+│   ├── ingest.py           # Data Ingestion Script
+│   └── query.py            # Retrieval Interface
+│
+├── scripts/                # Utility Scripts
+│   └── description_generator.py  # VLM Description Generator
+│
 ├── utils/
 │   ├── errors.py                   # Custom error classes
 │   └── logger.py                   # Logging configuration
@@ -43,22 +51,31 @@ backend/
    - Validates with `json_validator.py`
    - If errors, retry with LLM
 
-3. **Code Generation**
+3. **RAG System Setup (Prerequisite)**
+   - **Data**: Extract `batches.zip` to `backend/scripts/`.
+   - **Descriptions**: Run `python scripts/description_generator.py` (Generate descriptions with llava-phi3).
+   - **Ingestion**: Run `python -m rag.ingest` (Index descriptions & JSONs into ChromaDB).
+   - **Query Test**: Run `python -m rag.query "your prompt"` to verify retrieval.
+
+4. **RAG Retrieval**
+   - User prompt → `rag/query.py` → Retrieved JSON Template
+
+5. **Code Generation**
    - `cadquery_generator.py` converts JSON → Python
    - Saves to `outputs/py/`
 
-4. **Execution**
+6. **Execution**
    - Executes Python file
    - Generates STEP file in `outputs/step/`
 
-5. **Parameter Management**
+7. **Parameter Management**
    - `parameter_extractor.py` extracts editable values
    - Frontend displays as markdown
    - User changes values
    - `parameter_updater.py` updates Python file
    - Re-execute to generate new STEP
 
-6. **FreeCAD Integration**
+8. **FreeCAD Integration**
    - `freecad_connector.py` opens/reloads STEP files
    - Macros for automation
 
