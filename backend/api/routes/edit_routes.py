@@ -42,7 +42,6 @@ def edit_from_step():
     Form Data:
         file   (required): The .step file to edit.
         prompt (required): Natural language edit instruction.
-        open_freecad (optional): "true" to open in FreeCAD after generation.
 
     Returns:
         JSON with status, step_url, features analysis, and visual description.
@@ -59,8 +58,6 @@ def edit_from_step():
     if not prompt:
         return jsonify({"error": True, "message": "Edit prompt is required."}), 400
 
-    open_freecad = request.form.get("open_freecad", "false").lower() == "true"
-
     # --- Save uploaded file ---
     try:
         step_path = _save_upload(file)
@@ -70,7 +67,7 @@ def edit_from_step():
 
     # --- Run edit pipeline ---
     logger.info(f"Running edit pipeline: prompt='{prompt}', file={step_path}")
-    result = edit_pipeline.edit_step(step_path, prompt, open_freecad=open_freecad)
+    result = edit_pipeline.edit_step(step_path, prompt)
 
     # --- Cleanup upload ---
     try:

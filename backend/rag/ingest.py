@@ -19,7 +19,7 @@ def ingest_data():
     desc_files = glob.glob(os.path.join(DESC_DIR, "**", "*.txt"), recursive=True)
     
     if not desc_files:
-        print("No description files found! Run local_cpu_vision.py first.")
+        print("No description files found! Run local_cpu_                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                first.")
         return
 
     print(f"Found {len(desc_files)} descriptions. Starting ingestion...")

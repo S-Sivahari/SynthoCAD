@@ -22,70 +22,13 @@ from services.gemini_service import call_gemini
 from services.ollama_service import call_ollama
 from core.main import SynthoCadPipeline
 from core import config
+from core.schema_loader import build_edit_prompt
 
 logger = logging.getLogger(__name__)
 
-# ─── LLM Prompt Template ──────────────────────────────────────────────────────
-
-EDIT_SYSTEM_PROMPT = """You are an expert parametric CAD engineer converting existing STEP geometry into editable SCL (SynthoCAD Language) JSON.
-
-CRITICAL OUTPUT RULES:
-1. Output ONLY valid raw JSON — no markdown, no explanation, no comments.
-2. The JSON MUST have a "parts" key with at least "part_1".
-3. "part_1" MUST use "NewBodyFeatureOperation".
-4. Each part needs EXACTLY ONE of: sketch+extrusion, revolve_profile+revolve, or hole_feature.
-5. Sketch coordinates are normalized (0.0-1.0), then sketch_scale converts to real mm.
-6. Always include "units": "mm".
-
-REQUIRED JSON SKELETON (fill in values, preserve structure):
-{
-  "final_name": "Edited_Part",
-  "final_shape": "Box",
-  "units": "mm",
-  "parts": {
-    "part_1": {
-      "coordinate_system": {
-        "Euler Angles": [0.0, 0.0, 0.0],
-        "Translation Vector": [0.0, 0.0, 0.0]
-      },
-      "sketch": {
-        "face_1": {
-          "loop_1": {
-            "line_1": {"Start Point": [0.0, 0.0], "End Point": [1.0, 0.0]},
-            "line_2": {"Start Point": [1.0, 0.0], "End Point": [1.0, 1.0]},
-            "line_3": {"Start Point": [1.0, 1.0], "End Point": [0.0, 1.0]},
-            "line_4": {"Start Point": [0.0, 1.0], "End Point": [0.0, 0.0]}
-          }
-        }
-      },
-      "extrusion": {
-        "extrude_depth_towards_normal": 0.2,
-        "extrude_depth_opposite_normal": 0.0,
-        "sketch_scale": 5.0,
-        "operation": "NewBodyFeatureOperation"
-      },
-      "description": {
-        "name": "Base Body",
-        "shape": "Box",
-        "length": 5.0,
-        "width": 5.0,
-        "height": 1.0
-      }
-    }
-  }
-}
-
-SCALING RULES:
-- BOX: sketch is unit square [0,0]->[1,0]->[1,1]->[0,1]. sketch_scale = width_mm.
-- extrude_depth_towards_normal IS ABSOLUTE MM if using sketch_scale=1.0,
-  OR relative if sketch_scale > 1.0.
-  RECOMMENDED: Set sketch_scale to width, then extrude_depth = height/width.
-- Example: 10x10x2mm box -> sketch_scale=10.0, extrude_depth=0.2.
-"""
-
 def _build_edit_prompt(features: Dict, user_prompt: str) -> str:
     """Build the full LLM prompt combining geometric features and user intent."""
-    parts = [EDIT_SYSTEM_PROMPT]
+    parts = [build_edit_prompt()]
 
     parts.append("\n\n=== GEOMETRIC FEATURE REPORT (EXACT) ===")
     parts.append(f"Summary: {features.get('summary', 'N/A')}")

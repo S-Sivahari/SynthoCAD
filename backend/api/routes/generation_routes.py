@@ -48,8 +48,7 @@ def generate_from_prompt():
     
     Request Body:
     {
-        "prompt": "Create a cylinder with 20mm diameter and 50mm height",
-        "open_freecad": true  (optional, default: true)
+        "prompt": "Create a cylinder with 20mm diameter and 50mm height"
     }
     
     Returns:
@@ -58,14 +57,13 @@ def generate_from_prompt():
         "json_file": "/path/to/output.json",
         "py_file": "/path/to/output_generated.py",
         "step_file": "/path/to/output.step",
-        "parameters": {...},
-        "freecad_opened": true
+        "glb_url": "/outputs/glb/output.glb",
+        "parameters": {...}
     }
     """
     try:
         data = request.get_json()
         prompt = data.get('prompt', '')
-        open_freecad = data.get('open_freecad', True)
         
         if not prompt:
             return jsonify({
@@ -76,7 +74,7 @@ def generate_from_prompt():
         api_logger.info(f"Starting generation from prompt: {prompt[:100]}...")
         
         # Process through the full pipeline
-        result = pipeline.process_from_prompt(prompt, open_freecad=open_freecad)
+        result = pipeline.process_from_prompt(prompt)
         
         if result['status'] == 'success':
             api_logger.info(f"Successfully generated: {result['step_file']}")
@@ -110,8 +108,7 @@ def generate_from_json():
     Request Body:
     {
         "json": {...SCL JSON...},
-        "output_name": "my_part" (optional),
-        "open_freecad": true (optional, default: true)
+        "output_name": "my_part" (optional)
     }
     
     Returns:
@@ -120,15 +117,14 @@ def generate_from_json():
         "json_file": "/path/to/output.json",
         "py_file": "/path/to/output_generated.py",
         "step_file": "/path/to/output.step",
-        "parameters": {...},
-        "freecad_opened": true
+        "glb_url": "/outputs/glb/output.glb",
+        "parameters": {...}
     }
     """
     try:
         data = request.get_json()
         scl_json = data.get('json', {})
         output_name = data.get('output_name', None)
-        open_freecad = data.get('open_freecad', True)
         
         if not scl_json:
             return jsonify({
@@ -139,7 +135,7 @@ def generate_from_json():
         api_logger.info(f"Starting generation from JSON. Output: {output_name or 'auto'}")
         
         # Process through the pipeline
-        result = pipeline.process_from_json(scl_json, output_name=output_name, open_freecad=open_freecad)
+        result = pipeline.process_from_json(scl_json, output_name=output_name)
         
         if result['status'] == 'success':
             api_logger.info(f"Successfully generated: {result['step_file']}")

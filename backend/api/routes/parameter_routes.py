@@ -14,7 +14,6 @@ from utils.logger import api_logger
 from utils.errors import ParameterUpdateError
 from core import config
 
-
 bp = Blueprint('parameters', __name__)
 extractor = ParameterExtractor()  # Legacy regex-based
 ai_extractor = AIParameterExtractor()  # AI-powered (most accurate)
@@ -144,12 +143,11 @@ def update_parameters(filename):
 @bp.route('/regenerate/<filename>', methods=['POST'])
 def regenerate_step(filename):
     """
-    Regenerate STEP file after parameter updates and optionally open in FreeCAD.
+    Regenerate STEP file after parameter updates.
     
     Request Body:
     {
-        "parameters": {"radius": 15.0, "height": 30.0},
-        "open_freecad": true (optional, default: true)
+        "parameters": {"radius": 15.0, "height": 30.0}
     }
     """
     py_file = config.PY_OUTPUT_DIR / filename
@@ -162,7 +160,6 @@ def regenerate_step(filename):
         
     data = request.get_json()
     parameters = data.get('parameters', {})
-    open_freecad = data.get('open_freecad', True)
     
     if not parameters:
         return jsonify({
@@ -186,19 +183,23 @@ def regenerate_step(filename):
         api_logger.info(f"Regenerating {output_name} with updated parameters")
         step_file = pipeline.regenerate_from_updated_python(
             str(py_file), 
-            output_name, 
-            open_freecad=open_freecad
+            output_name
         )
         
         api_logger.info(f"Successfully regenerated: {step_file}")
+
+        # Check for GLB
+        from core import config as cfg
+        glb_file = cfg.GLB_OUTPUT_DIR / f"{output_name}.glb"
         
         return jsonify({
             'success': True,
+            'status': 'success',
             'message': f'Regenerated with {len(parameters)} updated parameters',
             'py_file': str(py_file),
             'step_file': step_file,
-            'updated_parameters': list(parameters.keys()),
-            'freecad_opened': open_freecad
+            'glb_url': f'/outputs/glb/{output_name}.glb' if glb_file.exists() else None,
+            'updated_parameters': list(parameters.keys())
         }), 200
         
     except ParameterUpdateError as e:
