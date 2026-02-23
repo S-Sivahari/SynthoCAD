@@ -6,8 +6,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SynthoCAD</title>
     <link rel="stylesheet" href="css/style.css">
-    <!-- Google Model Viewer for 3D GLB display -->
-    <script type="module" src="https://ajax.googleapis.com/ajax/libs/model-viewer/3.5.0/model-viewer.min.js"></script></head>
+
+    <!-- Three.js r128 + OrbitControls via CDN (r128 is the last version with stable global THREE.OrbitControls) -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <!-- occt-import-js: OpenCASCADE WASM for STEP parsing (0.0.23 = latest; global: occtimportjs) -->
+    <script src="https://cdn.jsdelivr.net/npm/occt-import-js@0.0.23/dist/occt-import-js.js"></script>
+</head>
 
 <body>
     <div class="app">
@@ -47,7 +52,10 @@
                             <span id="drop-zone-text">Drop .step file or click to browse</span>
                         </div>
                     </div>
-                    <button id="preview-btn" class="preview-btn" disabled>Preview</button>
+                    <div class="upload-btn-row">
+                        <button id="preview-btn" class="preview-btn" disabled>Preview</button>
+                        <button id="view3d-btn" class="view3d-btn" disabled>View 3D</button>
+                    </div>
                     <div id="preview-error" class="error-message"></div>
 
                     <!-- Edit prompt (shown after preview) -->
@@ -83,21 +91,26 @@
 
                 <!-- Tab Panels -->
                 <div class="tab-panels">
-                    <!-- 3D Viewer (Google Model Viewer) -->
-                    <div class="tab-panel active" id="panel-viewer3d">
-                        <div id="viewer3d-placeholder" class="placeholder">
-                            <p>Generate a model, then click <strong>Visualize</strong> to view it in 3D</p>
-                        </div>
-                        <div id="viewer3d-container" class="viewer3d-container hidden">
-                            <model-viewer
-                                id="model-viewer"
-                                alt="Generated CAD model"
-                                shadow-intensity="1"
-                                camera-controls
-                                touch-action="pan-y"
-                                auto-rotate
-                                style="width: 100%; height: 100%; min-height: 400px; background-color: #1a1a2e;"
-                            ></model-viewer>
+                    <!-- FreeCAD Model: Three.js STEP Viewer -->
+                    <div class="tab-panel active" id="panel-freecad">
+                        <div id="step3d-container">
+                            <canvas id="step3d-canvas"></canvas>
+                            <!-- Status overlay -->
+                            <div id="step3d-status">Drop or generate a STEP file to view in 3D</div>
+                            <!-- Loading spinner overlay -->
+                            <div id="step3d-loading" class="step3d-loading hidden">
+                                <div class="step3d-spinner"></div>
+                                <span id="step3d-loading-text">Loading…</span>
+                            </div>
+                            <!-- Viewer toolbar -->
+                            <div class="step3d-toolbar">
+                                <button class="step3d-btn" id="step3d-btn-reset" onclick="stepViewer.resetView()"
+                                    title="Fit to view">⊡ Fit</button>
+                                <button class="step3d-btn" id="step3d-btn-wire" onclick="stepViewer.toggleWireframe()"
+                                    title="Toggle wireframe">⬡ Wire</button>
+                            </div>
+                            <!-- Face-click tooltip -->
+                            <div id="step3d-face-tip" class="step3d-face-tip" style="display:none;"></div>
                         </div>
                         <button id="visualize-btn" class="visualize-btn hidden">Visualize Model</button>
                     </div>
@@ -174,6 +187,7 @@
     </div>
 
     <script src="js/api.js"></script>
+    <script src="js/step-viewer.js"></script>
     <script src="js/app.js"></script>
 </body>
 
