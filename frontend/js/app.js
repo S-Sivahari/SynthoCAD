@@ -32,6 +32,11 @@ const DOM = {
     pythonViewer: () => document.getElementById('python-viewer'),
     stepInfo: () => document.getElementById('step-info'),
     parametersForm: () => document.getElementById('parameters-form'),
+    // 3D Viewer
+    viewer3dPlaceholder: () => document.getElementById('viewer3d-placeholder'),
+    viewer3dContainer: () => document.getElementById('viewer3d-container'),
+    modelViewer: () => document.getElementById('model-viewer'),
+    visualizeBtn: () => document.getElementById('visualize-btn'),
     // Upload / Preview
     dropZone: () => document.getElementById('drop-zone'),
     stepFileInput: () => document.getElementById('step-file-input'),
@@ -74,6 +79,9 @@ function setupEventListeners() {
 
     // Regenerate button
     DOM.regenerateBtn().addEventListener('click', handleRegenerate);
+
+    // Visualize button (3D viewer)
+    DOM.visualizeBtn().addEventListener('click', handleVisualize);
 
     // Tab switching
     document.querySelectorAll('.tab').forEach(tab => {
@@ -303,10 +311,15 @@ async function handleGenerate() {
         if (!validation.valid) throw new Error(validation.error || 'Invalid prompt');
 
         updateLoading('Calling LLM...');
-        const result = await api.generateFromPrompt(prompt, false);
+        const result = await api.generateFromPrompt(prompt);
 
         const stepFile = extractFilename(result.step_file);
         state.currentModel = { ...result, baseName: stepFile.replace('.step', '') };
+
+        // Show Visualize button if GLB is available
+        if (result.glb_url) {
+            DOM.visualizeBtn().classList.remove('hidden');
+        }
 
         await Promise.all([
             loadJsonContent(state.currentModel.baseName),
@@ -342,9 +355,13 @@ async function handleRegenerate() {
             const value = parseFloat(input.value);
             if (!isNaN(value)) updates[param.name] = value;
         });
-        const result = await api.updateAndRegenerate(filename, updates, false);
+        const result = await api.updateAndRegenerate(filename, updates);
         if (result.status === 'success') {
             state.currentModel.step_file = result.step_file;
+            if (result.glb_url) {
+                state.currentModel.glb_url = result.glb_url;
+                DOM.visualizeBtn().classList.remove('hidden');
+            }
             await Promise.all([
                 loadJsonContent(state.currentModel.baseName),
                 loadPythonContent(state.currentModel.baseName),
@@ -360,6 +377,27 @@ async function handleRegenerate() {
     } finally {
         hideLoading();
     }
+}
+
+// ========================================
+// 3D Visualization (Google Model Viewer)
+// ========================================
+function handleVisualize() {
+    if (!state.currentModel || !state.currentModel.glb_url) {
+        showToast('No 3D model available. Generate a model first.', 'error');
+        return;
+    }
+    const BASE = 'http://localhost:5000';
+    const glbUrl = BASE + state.currentModel.glb_url;
+    const mv = DOM.modelViewer();
+
+    mv.setAttribute('src', glbUrl);
+    DOM.viewer3dPlaceholder().classList.add('hidden');
+    DOM.viewer3dContainer().classList.remove('hidden');
+
+    // Switch to 3D Viewer tab
+    switchTab('viewer3d');
+    showToast('3D model loaded', 'success');
 }
 
 // ========================================

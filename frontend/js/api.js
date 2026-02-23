@@ -42,23 +42,19 @@ class SynthoCADAPI {
         });
     }
 
-    async generateFromPrompt(prompt, openFreecad = true) {
+    async generateFromPrompt(prompt) {
         return this.request('/generate/from-prompt', {
             method: 'POST',
-            body: JSON.stringify({
-                prompt,
-                open_freecad: openFreecad
-            })
+            body: JSON.stringify({ prompt })
         });
     }
 
-    async generateFromJSON(jsonData, outputName = null, openFreecad = true) {
+    async generateFromJSON(jsonData, outputName = null) {
         return this.request('/generate/from-json', {
             method: 'POST',
             body: JSON.stringify({
                 json: jsonData,
-                output_name: outputName,
-                open_freecad: openFreecad
+                output_name: outputName
             })
         });
     }
@@ -78,23 +74,17 @@ class SynthoCADAPI {
         });
     }
 
-    async regenerateWithParameters(filename, parameters, openFreecad = true) {
+    async regenerateWithParameters(filename, parameters) {
         return this.request(`/parameters/regenerate/${filename}`, {
             method: 'POST',
-            body: JSON.stringify({
-                parameters,
-                open_freecad: openFreecad
-            })
+            body: JSON.stringify({ parameters })
         });
     }
 
-    async updateAndRegenerate(filename, parameters, openFreecad = true) {
+    async updateAndRegenerate(filename, parameters) {
         return this.request(`/parameters/update/${filename}`, {
             method: 'POST',
-            body: JSON.stringify({
-                parameters,
-                open_freecad: openFreecad
-            })
+            body: JSON.stringify({ parameters })
         });
     }
 
@@ -166,34 +156,6 @@ class SynthoCADAPI {
     async listGeneratedFiles() {
         return this.request(`/parameters/list-files`, {
             method: 'GET'
-        });
-    }
-
-    // ========== FreeCAD Viewer APIs ==========
-
-    async checkFreeCAD() {
-        return this.request('/viewer/check', {
-            method: 'GET'
-        });
-    }
-
-    async openInFreeCAD(stepFile, freecadPath = null) {
-        return this.request('/viewer/open', {
-            method: 'POST',
-            body: JSON.stringify({
-                step_file: stepFile,
-                freecad_path: freecadPath
-            })
-        });
-    }
-
-    async reloadInFreeCAD(stepFile, freecadPath = null) {
-        return this.request('/viewer/reload', {
-            method: 'POST',
-            body: JSON.stringify({
-                step_file: stepFile,
-                freecad_path: freecadPath
-            })
         });
     }
 
@@ -273,12 +235,6 @@ class SynthoCADAPI {
 
     async healthCheck() {
         return this.request('/health', {
-            method: 'GET'
-        });
-    }
-
-    async checkFreeCAD() {
-        return this.request('/viewer/check', {
             method: 'GET'
         });
     }
