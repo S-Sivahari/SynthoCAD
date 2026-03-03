@@ -96,6 +96,59 @@ def edit_from_step():
     }), 200
 
 
+@bp.route("/brep", methods=["POST"])
+def edit_brep():
+    """
+    Upload a STEP file + semantic edit prompt, receive a new edited STEP file.
+    Uses direct B-Rep face defeaturing and rebuilding.
+    """
+    if "file" not in request.files:
+        return jsonify({"error": True, "message": "No file uploaded."}), 400
+
+    file = request.files["file"]
+    if not file.filename or not file.filename.lower().endswith(".step"):
+        return jsonify({"error": True, "message": "Uploaded file must be a .step file."}), 400
+
+    prompt = request.form.get("prompt", "").strip()
+    if not prompt:
+        return jsonify({"error": True, "message": "Edit prompt is required."}), 400
+
+    try:
+        step_path = _save_upload(file)
+    except Exception as e:
+        logger.error(f"Upload save failed: {e}")
+        return jsonify({"error": True, "message": f"Failed to save upload: {str(e)}"}), 500
+
+    # Execute B-Rep semantic editing
+    from step_editor import step_executor
+    try:
+        result = step_executor.execute_edit_from_prompt(step_path, prompt)
+    except Exception as e:
+        logger.error(f"B-Rep execution failed: {e}")
+        try: os.remove(step_path)
+        except: pass
+        return jsonify({"error": True, "message": str(e)}), 500
+
+    # Cleanup input
+    try: os.remove(step_path)
+    except: pass
+
+    if result.get("status") == "error":
+        return jsonify({"error": True, "message": result.get("message", "Unknown error")}), 500
+
+    step_file = result.get("step_file", "")
+    step_url = ""
+    if step_file:
+        step_filename = Path(step_file).name
+        step_url = f"/outputs/step/{step_filename}"
+
+    return jsonify({
+        "status": "success",
+        "step_url": step_url,
+        "step_file": step_file,
+    }), 200
+
+
 @bp.route("/analyze", methods=["POST"])
 def analyze_step():
     """

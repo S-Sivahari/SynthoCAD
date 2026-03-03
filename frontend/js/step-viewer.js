@@ -201,14 +201,22 @@ const stepViewer = (() => {
 
     function _clearMeshes() {
         _deselectFace();    // restore material before disposing
-        currentMeshes.forEach(m => {
-            if (m.geometry) m.geometry.dispose();
-            if (m.material) {
-                if (Array.isArray(m.material)) m.material.forEach(mt => mt.dispose());
-                else m.material.dispose();
-            }
-            if (scene) scene.remove(m);
-        });
+        if (scene) {
+            const toRemove = [];
+            scene.traverse(child => {
+                if (child.isMesh && child.userData && child.userData.featureId !== undefined) {
+                    toRemove.push(child);
+                }
+            });
+            toRemove.forEach(m => {
+                if (m.geometry) m.geometry.dispose();
+                if (m.material) {
+                    if (Array.isArray(m.material)) m.material.forEach(mt => mt.dispose());
+                    else m.material.dispose();
+                }
+                scene.remove(m);
+            });
+        }
         currentMeshes = [];
         isWireframe = false;
         const btn = document.getElementById('step3d-btn-wire');
@@ -264,7 +272,6 @@ const stepViewer = (() => {
 
         // Build Three.js meshes — ONE per brep_face so each face is individually clickable.
         // occt-import-js gives one mesh per solid; brep_faces[].first/last are triangle-index ranges.
-        const meshGroup = new THREE.Group();
         let globalFaceIdx = 0;   // matches step_analyzer.py's face enumeration order
 
         result.meshes.forEach((occtMesh) => {
@@ -283,7 +290,7 @@ const stepViewer = (() => {
 
             if (!brepFaces) {
                 // ── Fallback: no face table — add as one solid mesh ──────────
-                _addRawMesh(meshGroup, srcPos, srcNorm, srcIdx,
+                _addRawMesh(srcPos, srcNorm, srcIdx,
                     solidColor, solidName, `f${globalFaceIdx++}`);
                 return;
             }
@@ -369,13 +376,13 @@ const stepViewer = (() => {
                 };
 
                 globalFaceIdx++;
-                meshGroup.add(mesh);
+                scene.add(mesh);
                 currentMeshes.push(mesh);
             });
         });
 
         // ── Helper: add a whole-solid mesh (brep_face fallback) ──────────────────
-        function _addRawMesh(group, srcPos, srcNorm, srcIdx, colorArr, name, featureId) {
+        function _addRawMesh(srcPos, srcNorm, srcIdx, colorArr, name, featureId) {
             if (!srcPos) return;
             const geom = new THREE.BufferGeometry();
             geom.setAttribute('position', new THREE.BufferAttribute(srcPos, 3));
@@ -388,11 +395,10 @@ const stepViewer = (() => {
             const mat = new THREE.MeshPhongMaterial({ color, specular: 0x666666, shininess: 60, side: THREE.DoubleSide });
             const mesh = new THREE.Mesh(geom, mat);
             mesh.userData = { featureId, meshName: name, origColor: color.clone() };
-            group.add(mesh);
+            scene.add(mesh);
             currentMeshes.push(mesh);
         }
 
-        scene.add(meshGroup);
         _setStatus('');   // hide status overlay
 
         // Fit camera so the model fills the view nicely

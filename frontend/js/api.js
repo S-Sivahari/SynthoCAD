@@ -160,6 +160,28 @@ class SynthoCADAPI {
         }
     }
 
+    async editStepBrep(formData) {
+        /**
+         * Upload a STEP file + text prompt to apply B-Rep semantic editing.
+         * formData must contain 'file' (.step) and 'prompt' (string).
+         */
+        const url = `${this.baseUrl}/edit/brep`;
+        try {
+            const response = await fetch(url, {
+                method: 'POST',
+                body: formData
+            });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.message || data.error || `HTTP ${response.status}`);
+            }
+            return data;
+        } catch (error) {
+            console.error('editStepBrep failed:', error);
+            throw error;
+        }
+    }
+
     async listGeneratedFiles() {
         return this.request(`/parameters/list-files`, {
             method: 'GET'

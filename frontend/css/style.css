@@ -155,6 +155,43 @@ body {
     border-bottom: 1px solid var(--border-gray);
 }
 
+.mode-tabs {
+    display: flex;
+    margin-bottom: 12px;
+    border: 2px solid var(--dark-gray);
+    border-radius: 4px;
+    overflow: hidden;
+    width: 100%;
+}
+
+.mode-tab {
+    flex: 1;
+    padding: 6px 0;
+    font-size: 12px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    border: none;
+    background: var(--white);
+    color: var(--dark-gray);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.mode-tab:not(.active) {
+    border-right: 1px solid var(--dark-gray);
+}
+
+.mode-tab:last-child:not(.active) {
+    border-right: none;
+}
+
+.mode-tab.active {
+    background: var(--dark-gray);
+    color: var(--white);
+}
+
+
 .prompt-textarea {
     width: 100%;
     min-height: 60px;
@@ -220,8 +257,15 @@ body {
 }
 
 @keyframes pencilPulse {
-    0%, 100% { box-shadow: 0 0 0 2px rgba(42, 122, 226, 0.15); }
-    50% { box-shadow: 0 0 0 4px rgba(42, 122, 226, 0.25); }
+
+    0%,
+    100% {
+        box-shadow: 0 0 0 2px rgba(42, 122, 226, 0.15);
+    }
+
+    50% {
+        box-shadow: 0 0 0 4px rgba(42, 122, 226, 0.25);
+    }
 }
 
 .prompt-edit-btn.hidden {
