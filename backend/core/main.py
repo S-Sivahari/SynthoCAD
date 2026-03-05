@@ -122,6 +122,7 @@ class SynthoCadPipeline:
 
             json_data = json.loads(cleaned_text)
 
+            json_data = self._strip_llm_comments(json_data)
             json_data, repairs = repair_json(json_data)
             if repairs:
                 self.logger.info(f"Auto-repaired JSON: {repairs}")
@@ -141,6 +142,7 @@ class SynthoCadPipeline:
                 response_text = call_gemini(retry_prompt, max_tokens=8192, temperature=0.1)
                 cleaned_text = self._strip_markdown_json(response_text)
                 json_data = json.loads(cleaned_text)
+                json_data = self._strip_llm_comments(json_data)
                 json_data, repairs = repair_json(json_data)
 
                 validation2 = validate_json_detailed(json_data)
@@ -168,7 +170,7 @@ class SynthoCadPipeline:
         return self.template_index.find_relevant_templates(prompt, max_results=3)
 
     def _strip_markdown_json(self, text: str) -> str:
-        """Strip markdown code blocks and extract JSON from LLM response."""
+        """Strip markdown fences, JS comments, trailing commas and extract JSON."""
         text = text.strip()
 
         if text.startswith("```"):
@@ -185,7 +187,28 @@ class SynthoCadPipeline:
             if match:
                 text = match.group()
 
+        # Remove JS single-line comments (// ...)
+        text = re.sub(r"//[^\n]*", "", text)
+        # Remove JS multi-line comments (/* ... */)
+        text = re.sub(r"/\*[\s\S]*?\*/", "", text)
+        # Remove trailing commas before } or ]
+        text = re.sub(r",\s*([\}\]])", r"\1", text)
+
         return text
+
+    @staticmethod
+    def _strip_llm_comments(data):
+        """Recursively remove _comment keys that the LLM copies from schema examples.
+        The SCL schema uses additionalProperties:false so they cause validation failures."""
+        if isinstance(data, dict):
+            return {
+                k: SynthoCadPipeline._strip_llm_comments(v)
+                for k, v in data.items()
+                if k != "_comment"
+            }
+        if isinstance(data, list):
+            return [SynthoCadPipeline._strip_llm_comments(item) for item in data]
+        return data
 
     def validate_json(self, json_data: Dict) -> bool:
         self.logger.info("Step 3: Validating JSON against SCL schema")
@@ -349,6 +372,8 @@ class SynthoCadPipeline:
     def process_from_json(self, json_data: Dict, output_name: Optional[str] = None, open_freecad: bool = True) -> Dict[str, Any]:
 
         try:
+            # Remove any _comment keys the LLM may have injected (copied from schema examples)
+            json_data = self._strip_llm_comments(json_data)
             json_data, repairs = repair_json(json_data)
             if repairs:
                 self.logger.info(f"Auto-repaired input JSON: {repairs}")

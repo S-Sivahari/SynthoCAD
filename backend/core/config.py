@@ -5,6 +5,7 @@ BACKEND_DIR = BASE_DIR / "backend"
 OUTPUT_DIR = BASE_DIR / "outputs"
 TEMPLATES_DIR = BASE_DIR / "templates"
 FREECAD_DIR = BASE_DIR / "freecad"
+DATA_DIR = BASE_DIR / "data"
 
 PY_OUTPUT_DIR = OUTPUT_DIR / "py"
 STEP_OUTPUT_DIR = OUTPUT_DIR / "step"
@@ -12,10 +13,12 @@ JSON_OUTPUT_DIR = OUTPUT_DIR / "json"
 LOGS_DIR = OUTPUT_DIR / "logs"
 UPLOAD_DIR = OUTPUT_DIR / "uploads"
 PREVIEWS_DIR = OUTPUT_DIR / "previews"
+GLB_OUTPUT_DIR = OUTPUT_DIR / "glb"
 
 SCHEMA_PATH = BACKEND_DIR / "core" / "scl_schema.json"
 
-for dir_path in [PY_OUTPUT_DIR, STEP_OUTPUT_DIR, JSON_OUTPUT_DIR, LOGS_DIR, UPLOAD_DIR, PREVIEWS_DIR]:
+# Ensure data directory and uploads exist
+for dir_path in [PY_OUTPUT_DIR, STEP_OUTPUT_DIR, JSON_OUTPUT_DIR, LOGS_DIR, UPLOAD_DIR, PREVIEWS_DIR, GLB_OUTPUT_DIR, DATA_DIR, DATA_DIR / "uploads"]:
     dir_path.mkdir(parents=True, exist_ok=True)
 
 LOG_LEVEL = "INFO"
@@ -92,29 +95,11 @@ RETRY_INITIAL_DELAY = 1.0  # Initial delay in seconds
 RETRY_MAX_DELAY = 60.0  # Maximum delay between retries
 RETRY_EXPONENTIAL_BASE = 2.0  # Exponential backoff base
 
-# ── RAG Configuration ─────────────────────────────────────────────────────
-# Set RAG_ENABLED = True once you have plugged in your RAG provider.
-# RAG_PROVIDER_CLASS should be a dotted path like "rag.provider.ChromaRAGProvider"
-# or leave it as None / "rag.provider.NullRAGProvider" to disable.
-RAG_ENABLED = False
-RAG_PROVIDER_CLASS = "rag.provider.ChromaRAGProvider"  # swap with your own
-
-
 def get_rag_provider():
-    """Instantiate the configured RAG provider (lazy import)."""
-    from rag.provider import NullRAGProvider
-    if not RAG_ENABLED:
-        return NullRAGProvider()
+    """Returns the configured RAG provider (Chroma or Null)."""
     try:
-        module_path, class_name = RAG_PROVIDER_CLASS.rsplit(".", 1)
-        import importlib
-        mod = importlib.import_module(module_path)
-        cls = getattr(mod, class_name)
-        return cls()
-    except Exception as exc:
-        import logging
-        logging.getLogger("synthocad").warning(
-            f"Could not load RAG provider '{RAG_PROVIDER_CLASS}': {exc}. "
-            "Falling back to NullRAGProvider."
-        )
+        from rag.provider import ChromaRAGProvider
+        return ChromaRAGProvider()
+    except Exception:
+        from rag.provider import NullRAGProvider
         return NullRAGProvider()

@@ -2,6 +2,7 @@
 
 Extracts exact geometric features (Cylinders, Planes, Cones, Tori)
 from a STEP file using the OpenCascade Technology (OCP) kernel via CadQuery.
+Also runs topology-aware block classification via ShapeRecognizer.
 
 Returns a structured dictionary of features with exact dimensions,
 which is then passed to the LLM for high-accuracy editing.
@@ -13,8 +14,13 @@ from OCP.GeomAbs import (
     GeomAbs_Torus, GeomAbs_Sphere, GeomAbs_BSplineSurface,
     GeomAbs_SurfaceOfRevolution
 )
+from OCP.TopAbs import TopAbs_REVERSED
 from typing import Dict, Any
 import logging
+
+from .shape_recognizer import ShapeRecognizer
+
+_recognizer = ShapeRecognizer()
 
 logger = logging.getLogger(__name__)
 
@@ -60,9 +66,23 @@ def analyze(step_path: str) -> Dict[str, Any]:
                 radius = _round(cyl.Radius())
                 loc = cyl.Location()
                 ax = cyl.Axis()
+
+                # Determine if this is an internal hole (face normal points
+                # inward = REVERSED) or an external shaft/boss (FORWARD).
+                is_hole = (face.wrapped.Orientation() == TopAbs_REVERSED)
+
+                # Height of the cylinder from its bounding box.
+                bb = face.BoundingBox()
+                dx = _round(bb.xmax - bb.xmin)
+                dy = _round(bb.ymax - bb.ymin)
+                dz = _round(bb.zmax - bb.zmin)
+                height = _round(max(dx, dy, dz))  # longest dim = cylinder axis
+
                 cylinders.append({
                     "id": f"f{i}",
                     "radius_mm": radius,
+                    "height_mm": height,
+                    "is_hole": is_hole,
                     "location": [_round(loc.X()), _round(loc.Y()), _round(loc.Z())],
                     "axis": [_round(ax.Direction().X()), _round(ax.Direction().Y()), _round(ax.Direction().Z())],
                 })
@@ -165,6 +185,21 @@ def analyze(step_path: str) -> Dict[str, Any]:
     if tori:
         summary_parts.append(f"{len(tori)} toroidal face(s) (e.g. fillets).")
 
+    # -----------------------------------------------------------------
+    # Topology-aware block recognition
+    # -----------------------------------------------------------------
+    blocks = []
+    try:
+        blocks = _recognizer.recognize(step_path)
+        if blocks:
+            summary_parts.append(
+                f"Recognised {len(blocks)} block(s): "
+                + ", ".join(b["summary"] for b in blocks)
+                + "."
+            )
+    except Exception as e:
+        logger.warning(f"Shape recognition failed: {e}")
+
     result = {
         "cylinders": cylinders,
         "planes": planes,
@@ -173,10 +208,12 @@ def analyze(step_path: str) -> Dict[str, Any]:
         "other_faces": other,
         "bounding_box": bounding_box,
         "face_count": len(faces),
+        "blocks": blocks,
         "summary": " ".join(summary_parts),
     }
 
-    logger.info(f"Analysis complete: {len(cylinders)} cylinders, {len(planes)} planes.")
+    logger.info(f"Analysis complete: {len(cylinders)} cylinders, {len(planes)} planes, "
+                f"{len(blocks)} block(s).")
     return result
 
 

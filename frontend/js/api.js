@@ -188,6 +188,66 @@ class SynthoCADAPI {
         });
     }
 
+    // ========== OCP / Geometry APIs ==========
+
+    async uploadStepFile(file) {
+        /**
+         * Upload a STEP file to the backend data/uploads directory.
+         * Returns { url: '/data/uploads/<filename>' }
+         */
+        const url = `${this.baseUrl}/edit/upload`;
+        const formData = new FormData();
+        formData.append('file', file);
+        try {
+            const response = await fetch(url, { method: 'POST', body: formData });
+            const data = await response.json();
+            if (!response.ok) {
+                throw new Error(data.message || data.error || `HTTP ${response.status}`);
+            }
+            return data;
+        } catch (error) {
+            console.error('uploadStepFile failed:', error);
+            throw error;
+        }
+    }
+
+    async getOcpParameters(filename) {
+        return this.request(`/parameters/ocp/${encodeURIComponent(filename)}`, {
+            method: 'GET'
+        });
+    }
+
+    async regenerateOcp(filename, originalFeatures, updates) {
+        return this.request(`/parameters/regenerate-ocp/${encodeURIComponent(filename)}`, {
+            method: 'POST',
+            body: JSON.stringify({
+                updates,
+                original_features: originalFeatures
+            })
+        });
+    }
+
+    // ========== Panel History APIs ==========
+
+    async getHistory(panelId) {
+        return this.request(`/parameters/history/${encodeURIComponent(panelId)}`, {
+            method: 'GET'
+        });
+    }
+
+    async addHistoryEntry(panelId, entry) {
+        return this.request(`/parameters/history/${encodeURIComponent(panelId)}`, {
+            method: 'POST',
+            body: JSON.stringify(entry)
+        });
+    }
+
+    async clearPanelHistory(panelId) {
+        return this.request(`/parameters/history/${encodeURIComponent(panelId)}`, {
+            method: 'DELETE'
+        });
+    }
+
     // ========== Cleanup APIs ==========
 
     async getStorageStats() {

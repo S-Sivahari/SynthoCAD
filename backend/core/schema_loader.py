@@ -60,16 +60,29 @@ def _format_definitions(schema: Dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def _deep_strip_comments(obj):
+    """Recursively remove all '_comment' keys so they never appear in the
+    serialised examples that are fed to the LLM — preventing the model from
+    copying the pattern into its own output."""
+    if isinstance(obj, dict):
+        return {k: _deep_strip_comments(v) for k, v in obj.items() if k != "_comment"}
+    if isinstance(obj, list):
+        return [_deep_strip_comments(item) for item in obj]
+    return obj
+
+
 def _format_examples(schema: Dict[str, Any]) -> str:
-    """Render the embedded examples into a prompt section."""
+    """Render the embedded examples into a prompt section.
+    All _comment keys are removed at every nesting level so the LLM
+    never sees the pattern and is not tempted to copy it."""
     examples = schema.get("examples", [])
     if not examples:
         return ""
-    lines = ["\n=== SCHEMA EXAMPLES ==="]
+    lines = ["\n=== SCHEMA EXAMPLES (valid SCL JSON — study structure only) ==="]
     for i, ex in enumerate(examples, 1):
         comment = ex.get("_comment", f"Example {i}")
         lines.append(f"\n--- {comment} ---")
-        clean = {k: v for k, v in ex.items() if k != "_comment"}
+        clean = _deep_strip_comments(ex)
         lines.append(json.dumps(clean, indent=2))
     return "\n".join(lines)
 
@@ -187,14 +200,24 @@ def build_generation_prompt() -> str:
     preamble = (
         "You are an expert parametric CAD engineer. Convert natural language "
         "descriptions into valid SCL (SynthoCAD Language) JSON.\n\n"
-        "CRITICAL OUTPUT RULES:\n"
-        "1. Output ONLY valid raw JSON — no markdown, no explanation, no comments.\n"
-        "2. Always include \"units\" field (default: \"mm\").\n"
-        "3. First part (part_1) MUST use \"NewBodyFeatureOperation\".\n"
-        "4. Parts numbered sequentially: part_1, part_2, part_3...\n"
-        "5. Each part needs EXACTLY ONE of: sketch+extrusion, revolve_profile+revolve, or hole_feature.\n"
-        "6. Sketch coordinates are normalized (0.0-1.0), then sketch_scale converts to real mm.\n"
-        "7. Output ONLY raw JSON starting with { and ending with }.\n"
+        "ABSOLUTE OUTPUT CONTRACT — VIOLATIONS WILL BREAK THE PIPELINE:\n"
+        "• Output ONLY a single raw JSON object.\n"
+        "• Start with { and end with } — nothing before or after.\n"
+        "• NO markdown fences (no ```json, no ```).\n"
+        "• NO comments of any kind — // single-line, /* block */, or \"_comment\" keys are ALL forbidden.\n"
+        "• NO trailing commas after the last item in any object or array.\n"
+        "• NO explanation, NO preamble, NO notes outside the JSON object.\n\n"
+        "STRUCTURAL RULES:\n"
+        "1. Always include \"units\": \"mm\".\n"
+        "2. First part (part_1) MUST use \"NewBodyFeatureOperation\" inside extrusion.operation or revolve.operation.\n"
+        "3. Parts numbered sequentially: part_1, part_2, part_3...\n"
+        "4. Each part needs EXACTLY ONE of: sketch+extrusion, revolve_profile+revolve, or hole_feature.\n"
+        "5. Sketch coordinates are normalized (0.0-1.0), then sketch_scale converts to real mm.\n"
+        "6. The 'operation' property MUST be inside 'extrusion' or 'revolve', NOT on the part itself.\n"
+        "7. Valid operations: NewBodyFeatureOperation (part_1 only), JoinFeatureOperation, CutFeatureOperation, IntersectFeatureOperation.\n\n"
+        "COMMON MISTAKE TO AVOID:\n"
+        "❌ WRONG: \"part_2\": { \"operation\": \"CutFeatureOperation\", \"sketch\": {...} }\n"
+        "✅ CORRECT: \"part_2\": { \"sketch\": {...}, \"extrusion\": { \"operation\": \"CutFeatureOperation\", ... } }\n\n"
     )
     sections = [
         preamble,
@@ -217,14 +240,24 @@ def build_edit_prompt() -> str:
     preamble = (
         "You are an expert parametric CAD engineer converting existing STEP "
         "geometry into editable SCL (SynthoCAD Language) JSON.\n\n"
-        "CRITICAL OUTPUT RULES:\n"
-        "1. Output ONLY valid raw JSON — no markdown, no explanation, no comments.\n"
+        "ABSOLUTE OUTPUT CONTRACT — VIOLATIONS WILL BREAK THE PIPELINE:\n"
+        "• Output ONLY a single raw JSON object.\n"
+        "• Start with { and end with } — nothing before or after.\n"
+        "• NO markdown fences (no ```json, no ```).\n"
+        "• NO comments of any kind — // single-line, /* block */, or \"_comment\" keys are ALL forbidden.\n"
+        "• NO trailing commas after the last item in any object or array.\n"
+        "• NO explanation, NO preamble, NO notes outside the JSON object.\n\n"
+        "STRUCTURAL RULES:\n"
+        "1. Always include \"units\": \"mm\".\n"
         "2. The JSON MUST have a \"parts\" key with at least \"part_1\".\n"
-        "3. \"part_1\" MUST use \"NewBodyFeatureOperation\".\n"
+        "3. \"part_1\" MUST use \"NewBodyFeatureOperation\" inside extrusion.operation or revolve.operation.\n"
         "4. Each part needs EXACTLY ONE of: sketch+extrusion, revolve_profile+revolve, or hole_feature.\n"
         "5. Sketch coordinates are normalized (0.0-1.0), then sketch_scale converts to real mm.\n"
-        "6. Always include \"units\": \"mm\".\n"
-        "7. Output ONLY raw JSON starting with { and ending with }.\n"
+        "6. The 'operation' property MUST be inside 'extrusion' or 'revolve', NOT on the part itself.\n"
+        "7. Valid operations: NewBodyFeatureOperation (part_1 only), JoinFeatureOperation, CutFeatureOperation, IntersectFeatureOperation.\n\n"
+        "COMMON MISTAKE TO AVOID:\n"
+        "❌ WRONG: \"part_2\": { \"operation\": \"CutFeatureOperation\", \"sketch\": {...} }\n"
+        "✅ CORRECT: \"part_2\": { \"sketch\": {...}, \"extrusion\": { \"operation\": \"CutFeatureOperation\", ... } }\n\n"
     )
     sections = [
         preamble,

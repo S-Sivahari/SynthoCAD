@@ -304,6 +304,52 @@ def preview_step_by_name():
     }), 200
 
 
+@bp.route("/upload", methods=["POST"])
+def upload_step():
+    """
+    Upload a STEP file to the backend's data/uploads directory for OCP analysis.
+    The file is saved with its original filename (with a counter suffix to avoid collisions).
+
+    Form Data:
+        file (required): The .step file to upload.
+
+    Returns:
+        JSON with url field pointing to the uploaded file.
+    """
+    if "file" not in request.files:
+        return jsonify({"error": True, "message": "No file uploaded."}), 400
+
+    file = request.files["file"]
+    if not file.filename or not file.filename.lower().endswith((".step", ".stp")):
+        return jsonify({"error": True, "message": "Uploaded file must be a .step or .stp file."}), 400
+
+    upload_dir = Path(__file__).parent.parent.parent.parent / "data" / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+
+    # Use original filename; append counter to avoid overwriting
+    original_name = Path(file.filename).name
+    save_path = upload_dir / original_name
+    counter = 1
+    while save_path.exists():
+        stem = Path(original_name).stem
+        suffix = Path(original_name).suffix
+        save_path = upload_dir / f"{stem}_{counter}{suffix}"
+        counter += 1
+
+    try:
+        file.save(str(save_path))
+        logger.info(f"Uploaded STEP file: {save_path}")
+    except Exception as e:
+        logger.error(f"Upload save failed: {e}")
+        return jsonify({"error": True, "message": f"Failed to save upload: {str(e)}"}), 500
+
+    return jsonify({
+        "status": "success",
+        "filename": save_path.name,
+        "url": f"/data/uploads/{save_path.name}",
+    }), 200
+
+
 def _build_instructions(features: dict) -> str:
     """Build a human-readable guide for using feature IDs in the edit prompt."""
     lines = ["Use these feature IDs in your edit prompt:"]

@@ -18,11 +18,22 @@ const stepViewer = (() => {
 
     // ── Face Selection State ─────────────────────────────────────────────────
     let raycaster = null;
-    let selectedMesh = null;        // currently highlighted mesh
+    let selectedMesh = null;        // currently highlighted mesh (tooltip gold)
     let selectedOrigMat = null;     // its original material (or array)
-    let _selMat = null;             // lazily created on first init()
+    let _selMat = null;             // lazily created on first init() — gold tooltip
+    let _groupSelMat = null;        // green persistent highlight for group selection
     let _pointerDownPos = null;     // track pointer position for click vs drag
     const CLICK_THRESHOLD = 4;      // max pixels to still count as a click
+
+    // ── Group Selection State ────────────────────────────────────────────────
+    // Map of faceId → { mesh, savedMat } for persistently highlighted group faces
+    let _groupHighlightMeshes = new Map();
+    // External callback fired whenever a face is clicked: fn(faceId)
+    let _faceClickCb = null;
+
+    // ── OCP Feature Index ────────────────────────────────────────────────────
+    // Populated via setFaceFeatures(); maps face-id → {surfType, label, details, block}
+    let _faceIndex = {};            // { 'f0': { surfType, label, details, block } }
 
     const STATUS = {
         idle: 'Drop or generate a STEP file to view in 3D',
@@ -87,11 +98,20 @@ const stepViewer = (() => {
 
         // Raycaster for face picking
         raycaster = new THREE.Raycaster();
+        // Gold — tooltip / single-face selection highlight
         _selMat = new THREE.MeshPhongMaterial({
-            color: 0xf0a020,            // gold highlight
+            color: 0xf0a020,
             emissive: 0x402800,
             specular: 0xffffff,
             shininess: 80,
+            side: THREE.DoubleSide,
+        });
+        // Green — persistent group-selection highlight
+        _groupSelMat = new THREE.MeshPhongMaterial({
+            color: 0x34d399,
+            emissive: 0x0d4a30,
+            specular: 0xffffff,
+            shininess: 60,
             side: THREE.DoubleSide,
         });
         canvas.addEventListener('pointerdown', _onPointerDown);
@@ -200,6 +220,7 @@ const stepViewer = (() => {
     }
 
     function _clearMeshes() {
+        clearAllGroupHighlights();
         _deselectFace();    // restore material before disposing
         if (scene) {
             const toRemove = [];
@@ -478,20 +499,89 @@ const stepViewer = (() => {
 
         const hit = hits[0];
         const mesh = hit.object;
+        const fid = mesh.userData.featureId || null;
 
         if (mesh === selectedMesh) {
+            // Second click on the same face — toggle off tooltip selection
             _deselectFace();
             _hideFaceTooltip();
+            // Still fire the group callback so app.js can toggle it in/out
+            if (_faceClickCb && fid) _faceClickCb(fid);
             return;
         }
 
         _deselectFace();
 
         selectedMesh = mesh;
+        // If this face is group-highlighted, save the green mat as "original"
+        // so deselecting tooltip restores the green highlight correctly.
         selectedOrigMat = mesh.material;
         mesh.material = _selMat;
 
         _showFaceTooltip(event.clientX, event.clientY, mesh);
+
+        // Notify app.js — used by group-selection mode
+        if (_faceClickCb && fid) _faceClickCb(fid);
+    }
+
+    // ── Group highlight helpers ───────────────────────────────────────────────
+
+    /** Find a loaded mesh by its feature id string (e.g. 'f3'). */
+    function _findMeshByFaceId(faceId) {
+        return currentMeshes.find(m => m.userData.featureId === faceId) || null;
+    }
+
+    /**
+     * Apply or remove the persistent green group-selection highlight on a face mesh.
+     * @param {string} faceId   e.g. 'f3'
+     * @param {boolean} isSelected
+     */
+    function setGroupFaceSelected(faceId, isSelected) {
+        const mesh = _findMeshByFaceId(faceId);
+        if (!mesh) return;
+
+        if (isSelected) {
+            if (_groupHighlightMeshes.has(faceId)) return; // already highlighted
+            // Save whatever material is currently on the mesh
+            const savedMat = mesh.material;
+            _groupHighlightMeshes.set(faceId, { mesh, savedMat });
+            mesh.material = _groupSelMat;
+            // If this mesh is also the tooltip-selected one, update its saved origMat
+            // so deselecting tooltip won't accidentally restore the pre-group material.
+            if (selectedMesh === mesh) selectedOrigMat = _groupSelMat;
+        } else {
+            const entry = _groupHighlightMeshes.get(faceId);
+            if (!entry) return;
+            // Restore saved material only when the mesh is NOT currently lit by the tooltip
+            if (selectedMesh !== mesh) {
+                mesh.material = entry.savedMat;
+            } else {
+                // Tooltip is active — update savedOrigMat so deselect restores plain material
+                selectedOrigMat = entry.savedMat;
+            }
+            _groupHighlightMeshes.delete(faceId);
+        }
+    }
+
+    /** Remove all persistent group highlights (e.g. when group-mode is turned off). */
+    function clearAllGroupHighlights() {
+        _groupHighlightMeshes.forEach(({ mesh, savedMat }, faceId) => {
+            if (selectedMesh !== mesh) {
+                mesh.material = savedMat;
+            } else {
+                selectedOrigMat = savedMat;
+            }
+        });
+        _groupHighlightMeshes.clear();
+    }
+
+    /**
+     * Register a callback invoked whenever a face mesh is clicked in the 3D viewer.
+     * The callback receives the face-id string (e.g. 'f3').
+     * @param {function|null} fn
+     */
+    function setFaceClickCallback(fn) {
+        _faceClickCb = fn;
     }
 
     function _deselectFace() {
@@ -506,6 +596,7 @@ const stepViewer = (() => {
         if (!tip) return;
 
         const fid = mesh.userData.featureId || '?';
+        const info = _faceIndex[fid];  // may be undefined if features not yet loaded
 
         // Compute bounding-box dimensions of this face's geometry
         let dimStr = '';
@@ -518,11 +609,47 @@ const stepViewer = (() => {
             dimStr = `${fmt(sz.x)} × ${fmt(sz.y)} × ${fmt(sz.z)} mm`;
         } catch (_) { /* geometry not ready */ }
 
-        // Build display lines
-        const lines = [`<span class="face-tip-id">${fid}</span>`];
-        if (dimStr) lines.push(`<span class="face-tip-name">${dimStr}</span>`);
+        // ── Build tooltip HTML ────────────────────────────────────────────
+        let html = `<div class="face-tip-row face-tip-header">
+            <span class="face-tip-id">${fid.toUpperCase()}</span>`;
 
-        tip.innerHTML = lines.join('');
+        if (info) {
+            // Surface type badge
+            const typeColor = {
+                'Cylinder': '#4ade80', 'Plane': '#60a5fa',
+                'Cone': '#f97316',     'Torus': '#c084fc', 'Sphere': '#facc15'
+            }[info.surfType] || '#9ca3af';
+            html += `<span class="face-tip-badge" style="background:${typeColor}22;color:${typeColor};border-color:${typeColor}55">${info.surfType}</span>`;
+        }
+        html += `</div>`;
+
+        if (info) {
+            // Primary dimension label (e.g. "Ø12.00 mm" or "horizontal")
+            if (info.label) {
+                html += `<div class="face-tip-row face-tip-label">${info.label}</div>`;
+            }
+            // Detail lines
+            info.details.forEach(d => {
+                html += `<div class="face-tip-row face-tip-detail">${d}</div>`;
+            });
+            // Block / shape pattern
+            if (info.block) {
+                const shapeLabel = info.block.shape.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                html += `<div class="face-tip-row face-tip-block">
+                    <span class="face-tip-block-icon">⬡</span>
+                    <span><strong>${shapeLabel}</strong> <span class="face-tip-conf">(${info.block.confidence}%)</span></span>
+                </div>`;
+                if (info.block.summary && info.block.summary !== info.block.shape) {
+                    html += `<div class="face-tip-row face-tip-summary">${info.block.summary}</div>`;
+                }
+            }
+        } else {
+            // Fallback: show raw bbox
+            if (dimStr) html += `<div class="face-tip-row face-tip-detail">${dimStr}</div>`;
+            html += `<div class="face-tip-row face-tip-detail" style="opacity:0.5">Analyzing…</div>`;
+        }
+
+        tip.innerHTML = html;
         tip.style.display = 'block';
 
         // Position just above the cursor, inside the container
@@ -532,7 +659,7 @@ const stepViewer = (() => {
         let ty = clientY - cRect.top - 10;
 
         // Keep within bounds (rough)
-        const TW = 200, TH = 60;
+        const TW = 270, TH = 120;
         if (tx + TW > cRect.width) tx = clientX - cRect.left - TW - 10;
         if (ty + TH > cRect.height) ty = clientY - cRect.top - TH - 6;
         if (ty < 4) ty = 4;
@@ -546,6 +673,93 @@ const stepViewer = (() => {
         if (tip) tip.style.display = 'none';
     }
 
+    // ── Feature index builder ─────────────────────────────────────────────────
+    /**
+     * Ingest OCP feature data from the backend and build a fast face-id → info map.
+     * Call this after getOcpParameters() returns.
+     * @param {Object} features  The `features` object from /parameters/ocp/<file>
+     */
+    function setFaceFeatures(features) {
+        _faceIndex = {};
+        if (!features) return;
+
+        // Build block lookup: face-id → block summary + shape_type
+        const faceToBlock = {};
+        (features.blocks || []).forEach(block => {
+            const shape = block.shape_type || 'unknown';
+            const conf  = block.confidence != null ? (block.confidence * 100).toFixed(0) : '?';
+            const summary = block.summary || shape;
+            (block.face_ids || []).forEach(fid => {
+                faceToBlock[fid] = { shape, confidence: conf, summary };
+            });
+        });
+
+        // Cylinders
+        (features.cylinders || []).forEach(c => {
+            const blk = faceToBlock[c.id];
+            _faceIndex[c.id] = {
+                surfType: 'Cylinder',
+                label: `Ø${(c.radius_mm * 2).toFixed(2)} mm`,
+                details: [
+                    `Radius: ${c.radius_mm} mm`,
+                    `Axis: [${c.axis.map(v => v.toFixed(2)).join(', ')}]`,
+                    `Location: [${c.location.map(v => v.toFixed(2)).join(', ')}]`,
+                ],
+                block: blk || null,
+            };
+        });
+
+        // Planes
+        (features.planes || []).forEach(p => {
+            const blk = faceToBlock[p.id];
+            const dim = p.dims ? `${p.dims[0].toFixed(1)} × ${p.dims[1].toFixed(1)} mm` : '';
+            _faceIndex[p.id] = {
+                surfType: 'Plane',
+                label: (p.face_type || 'plane').replace(/_/g, ' '),
+                details: [
+                    dim ? `Dims: ${dim}` : '',
+                    `Normal: [${p.normal.map(v => v.toFixed(2)).join(', ')}]`,
+                    `Location: [${p.location.map(v => v.toFixed(2)).join(', ')}]`,
+                ].filter(Boolean),
+                block: blk || null,
+            };
+        });
+
+        // Cones
+        (features.cones || []).forEach(c => {
+            const blk = faceToBlock[c.id];
+            _faceIndex[c.id] = {
+                surfType: 'Cone',
+                label: `r=${c.apex_radius_mm} mm, α=${(c.half_angle_deg * 180 / Math.PI).toFixed(1)}°`,
+                details: [
+                    `Ref radius: ${c.apex_radius_mm} mm`,
+                    `Half-angle: ${(c.half_angle_deg * 180 / Math.PI).toFixed(1)}°`,
+                ],
+                block: blk || null,
+            };
+        });
+
+        // Tori
+        (features.tori || []).forEach(t => {
+            const blk = faceToBlock[t.id];
+            _faceIndex[t.id] = {
+                surfType: 'Torus',
+                label: `R=${t.major_radius_mm} r=${t.minor_radius_mm} mm`,
+                details: [
+                    `Major R: ${t.major_radius_mm} mm`,
+                    `Minor r: ${t.minor_radius_mm} mm`,
+                ],
+                block: blk || null,
+            };
+        });
+
+        console.log(`[step-viewer] Face index built: ${Object.keys(_faceIndex).length} entries`);
+    }
+
     // ── Public surface ────────────────────────────────────────────────────────
-    return { init, loadStepFile, loadStepUrl, resetView, toggleWireframe, dispose };
+    return {
+        init, loadStepFile, loadStepUrl, resetView, toggleWireframe, dispose, setFaceFeatures,
+        // Group-selection integration
+        setFaceClickCallback, setGroupFaceSelected, clearAllGroupHighlights,
+    };
 })();

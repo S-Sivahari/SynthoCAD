@@ -34,13 +34,17 @@ def _get_action_from_llm(prompt: str, features: dict) -> list:
     Return a strictly formatted JSON array of action objects. Support multiple faces if asked!
     Supported actions:
     
-    1. Resize a Hole/Cylinder:
-    {{"action": "resize_hole", "face_id": "f5", "new_radius": 15.0}}
+    1. Resize a Hole (internal cylinder, e.g. bore/through-hole):
+    {{"action": "resize_hole", "face_id": "f5", "new_radius": 3.0}}
     
-    2. Defeature (Delete a feature entirely):
+    2. Resize an external Shaft / Boss / Cylinder:
+    {{"action": "resize_hole", "face_id": "f10", "new_radius": 1.0}}
+    (Use the same action for both — the system detects hole vs shaft automatically.)
+    
+    3. Defeature (Delete a feature entirely):
     {{"action": "defeature", "face_id": "f12"}}
     
-    3. Extrude / Move a Planar Face (to change block dimensions, etc.):
+    4. Extrude / Move a Planar Face (to change block dimensions, etc.):
     {{"action": "extrude_face", "face_id": "f4", "distance": 5.0}}
     (Positive distance pushes outward adding volume. Negative distance pushes inward cutting volume.)
     
@@ -79,8 +83,8 @@ def _get_action_from_llm(prompt: str, features: dict) -> list:
         raise ValueError(f"Failed to interpret edit prompt using LLM: {e}")
 
 
-def execute_edit_from_prompt(step_path: str, prompt: str) -> Dict[str, Any]:
-    features = step_analyzer.analyze(step_path)
+def execute_edit_from_prompt(step_path: str, prompt: str, pre_analyzed_features: dict = None) -> Dict[str, Any]:
+    features = pre_analyzed_features or step_analyzer.analyze(step_path)
     
     # Prune features slightly to save tokens, but add bounding_box!
     simplified_features = {
@@ -105,11 +109,13 @@ def execute_action(step_path: str, commands: List[dict], original_features: dict
     # We must fetch the original faces before modifying the topology!
     faces = model.faces().vals()
     
-    base_solid = cq.Workplane(cq.Solid(model.val().wrapped))
-    
-    # Keep track of what we are operating on 
-    # (If we defeature, we mutate base_solid and must rely on the returned shape)
-    current_model = base_solid
+    # Handle both single-Solid and Compound (multi-body assembly) STEP files.
+    # cq.Solid() crashes on Compounds, so fall back to using the Workplane directly.
+    raw_shape = model.val().wrapped
+    try:
+        current_model = cq.Workplane(cq.Solid(raw_shape))
+    except Exception:
+        current_model = model  # compound / assembly — use as-is
     
     for command in commands:
         action = command.get("action")
@@ -154,34 +160,47 @@ def execute_action(step_path: str, commands: List[dict], original_features: dict
                 raise ValueError(f"Failed to extrude face {face_id}. Overlapping topology issues?")
                 
         else:
-            # Defeature based actions
-            try:
-                # Warning: Defeaturing sequential faces requires them to exist in current_model.
-                # If topology changed extensively, target_face might not map anymore. 
-                # (For completely isolated holes, it usually handles fine).
-                shape_to_remove = target_face.wrapped
-                remove_list = TopTools_ListOfShape()
-                remove_list.Append(shape_to_remove)
-                
-                solid = current_model.val().wrapped
-                
-                api = BRepAlgoAPI_Defeaturing()
-                api.SetShape(solid)
-                api.AddFacesToRemove(remove_list)
-                api.SetRunParallel(True)
-                api.Build()
-                
-                if not api.IsDone():
-                    raise ValueError("OpenCASCADE Defeaturing API failed. Geometry might be too complex.")
-                
-                healed_solid = api.Shape()
-            except Exception as e:
-                logger.error(f"Defeaturing failed on face {face_id}: {e}")
-                raise ValueError(f"Could not remove face {face_id}. It may be modified or intersecting.")
-            
-            healed_model = cq.Workplane(cq.Solid(healed_solid))
-            current_model = healed_model
-            
+            # Determine whether defeaturing is needed before branching.
+            # External shafts / bosses must NOT be defeatured — doing so
+            # collapses the solid.  Only internal holes and plain defeature
+            # actions need the BRepAlgoAPI_Defeaturing step.
+            needs_defeature = True
+            if action == "resize_hole":
+                _cd = next((c for c in original_features.get("cylinders", []) if c["id"] == face_id), None)
+                if _cd is not None and not _cd.get("is_hole", True):
+                    needs_defeature = False
+
+            if needs_defeature:
+                try:
+                    # Warning: Defeaturing sequential faces requires them to exist in current_model.
+                    # If topology changed extensively, target_face might not map anymore.
+                    # (For completely isolated holes, it usually handles fine).
+                    shape_to_remove = target_face.wrapped
+                    remove_list = TopTools_ListOfShape()
+                    remove_list.Append(shape_to_remove)
+
+                    solid = current_model.val().wrapped
+
+                    api = BRepAlgoAPI_Defeaturing()
+                    api.SetShape(solid)
+                    api.AddFacesToRemove(remove_list)
+                    api.SetRunParallel(True)
+                    api.Build()
+
+                    if not api.IsDone():
+                        raise ValueError("OpenCASCADE Defeaturing API failed. Geometry might be too complex.")
+
+                    healed_solid = api.Shape()
+                except Exception as e:
+                    logger.error(f"Defeaturing failed on face {face_id}: {e}")
+                    raise ValueError(f"Could not remove face {face_id}. It may be modified or intersecting.")
+
+                try:
+                    healed_model = cq.Workplane(cq.Solid(healed_solid))
+                except Exception:
+                    healed_model = cq.Workplane().newObject([cq.Shape.cast(healed_solid)])
+                current_model = healed_model
+
             if action == "defeature":
                 pass
                 
@@ -189,23 +208,80 @@ def execute_action(step_path: str, commands: List[dict], original_features: dict
                 new_radius = float(command.get("new_radius", 0))
                 if new_radius <= 0:
                     raise ValueError("Invalid new_radius for resize_hole.")
-                
+
                 cyl_data = next((c for c in original_features.get("cylinders", []) if c["id"] == face_id), None)
                 if not cyl_data:
                     raise ValueError(f"Could not find face {face_id} in cylinder features.")
-                
-                loc = cyl_data["location"]
-                axis = cyl_data["axis"]
-                
+
+                loc        = cyl_data["location"]
+                axis       = cyl_data["axis"]
+                old_radius = float(cyl_data["radius_mm"])
+                is_hole    = bool(cyl_data.get("is_hole", True))   # default to hole for safety
+                height     = float(cyl_data.get("height_mm", 200)) # bbox height of the cylinder face
+
                 vec_axis = cq.Vector(*axis)
-                pnt_loc = cq.Vector(*loc)
-                
-                cut_tool = cq.Workplane(cq.Plane(origin=pnt_loc, normal=vec_axis)).circle(new_radius).extrude(1000, both=True)
-                
-                try:
-                    current_model = current_model.cut(cut_tool)
-                except Exception as e:
-                    raise ValueError(f"Failed to cut new hole: {e}")
+                pnt_loc  = cq.Vector(*loc)
+                plane    = cq.Plane(origin=pnt_loc, normal=vec_axis)
+                # Generous extrusion: ×3 the bbox height so the tool always
+                # spans the full cylinder regardless of where loc sits on it.
+                tool_h = max(height * 3.0, 50.0)
+
+                if is_hole:
+                    # ── Internal hole ────────────────────────────────────────
+                    # Approach: remove the old hole surface then cut the new
+                    # radius.  current_model was already defeatured above.
+                    cut_tool = (
+                        cq.Workplane(plane)
+                        .circle(new_radius)
+                        .extrude(tool_h, both=True)
+                    )
+                    try:
+                        current_model = current_model.cut(cut_tool)
+                    except Exception as e:
+                        raise ValueError(f"Failed to resize internal hole {face_id}: {e}")
+
+                else:
+                    # ── External shaft / boss ─────────────────────────────────
+                    # The defeature was intentionally skipped above so
+                    # current_model is still the intact solid — operate on it
+                    # directly with an annular boolean.
+                    TOL = 0.05  # small overlap so boolean leaves no slivers
+                    if new_radius < old_radius:
+                        # Shrink: cut an annular ring from outer surface inward.
+                        # Ring: outer = old_radius + TOL, inner = new_radius.
+                        outer_cyl = (
+                            cq.Workplane(plane)
+                            .circle(old_radius + TOL)
+                            .extrude(tool_h, both=True)
+                        )
+                        inner_keep = (
+                            cq.Workplane(plane)
+                            .circle(new_radius)
+                            .extrude(tool_h, both=True)
+                        )
+                        annular_cut = outer_cyl.cut(inner_keep)
+                        try:
+                            current_model = current_model.cut(annular_cut)
+                        except Exception as e:
+                            raise ValueError(f"Failed to shrink shaft {face_id}: {e}")
+                    else:
+                        # Grow: union an annular sleeve around the shaft.
+                        # Sleeve: outer = new_radius, inner = old_radius - TOL.
+                        outer_add = (
+                            cq.Workplane(plane)
+                            .circle(new_radius)
+                            .extrude(tool_h, both=True)
+                        )
+                        inner_hole = (
+                            cq.Workplane(plane)
+                            .circle(old_radius - TOL)
+                            .extrude(tool_h, both=True)
+                        )
+                        annular_sleeve = outer_add.cut(inner_hole)
+                        try:
+                            current_model = current_model.union(annular_sleeve)
+                        except Exception as e:
+                            raise ValueError(f"Failed to grow shaft {face_id}: {e}")
                     
             else:
                 raise ValueError(f"Unsupported action: {action}")

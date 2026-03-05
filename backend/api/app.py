@@ -47,6 +47,12 @@ def create_app():
         """Serve generated files (JSON, Python, STEP, images) from outputs directory"""
         output_dir = Path(__file__).parent.parent.parent / 'outputs' / subpath
         return send_from_directory(output_dir, filename)
+
+    @app.route('/data/uploads/<filename>')
+    def serve_data_upload(filename):
+        """Serve uploaded STEP files stored in data/uploads/"""
+        uploads_dir = Path(__file__).parent.parent.parent / 'data' / 'uploads'
+        return send_from_directory(uploads_dir, filename)
     
     # Run auto cleanup on startup if enabled
     if config.CLEANUP_AUTO_RUN and config.CLEANUP_ENABLED:
@@ -83,9 +89,13 @@ def create_app():
     def internal_error(error):
         api_logger.error(f"Internal server error: {str(error)}")
         return jsonify({'error': True, 'message': 'Internal server error'}), 500
-    
-    @app.route('/', methods=['GET'])
-    def root():
+
+    @app.route('/api/v1/health', methods=['GET'])
+    def health_check():
+        return jsonify({'status': 'healthy', 'service': 'SynthoCAD API'}), 200
+
+    @app.route('/api/v1', methods=['GET'])
+    def api_info():
         return jsonify({
             'service': 'SynthoCAD API',
             'version': '1.0.0',
@@ -100,10 +110,6 @@ def create_app():
                 'edit': '/api/v1/edit'
             }
         }), 200
-        
-    @app.route('/api/v1/health', methods=['GET'])
-    def health_check():
-        return jsonify({'status': 'healthy', 'service': 'SynthoCAD API'}), 200
         
     return app
 

@@ -1,7 +1,9 @@
 from flask import Blueprint, request, jsonify, send_file
 import sys
+import re
 import json
 from pathlib import Path
+from typing import Dict, List, Any
 
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
@@ -13,35 +15,41 @@ from core.main import SynthoCadPipeline
 from utils.logger import api_logger
 from utils.errors import ParameterUpdateError
 from core import config
+from step_editor import step_analyzer, edit_pipeline
 
 bp = Blueprint('parameters', __name__)
-extractor = ParameterExtractor()  # AST-based (default, most reliable)
-ai_extractor = AIParameterExtractor()  # AI-powered (LLM fallback)
+extractor = ParameterExtractor()  # Legacy regex-based
+ai_extractor = AIParameterExtractor()  # AI-powered (most accurate)
 intelligent_extractor = IntelligentParameterExtractor()  # Rule-based JSON parser
 updater = ParameterUpdater()
-pipeline = SynthoCadPipeline(rag_provider=config.get_rag_provider())
+pipeline = SynthoCadPipeline()  # For regeneration
 
 
 @bp.route('/extract/<filename>', methods=['GET'])
 def extract_parameters(filename):
     """
-    Extract parameters from generated CadQuery Python file.
+    Extract parameters using AI-powered extraction (most accurate)
     Query params:
-    - method: 'legacy' (default, AST-based), 'ai', 'intelligent'
+    - method: 'ai' (default), 'intelligent', 'legacy'
     """
     
-    method = request.args.get('method', 'legacy')
+    method = request.args.get('method', 'ai')
     
     # Find corresponding files
     base_name = filename.replace('_generated.py', '')
     json_file = config.JSON_OUTPUT_DIR / f"{base_name}.json"
     py_file = config.PY_OUTPUT_DIR / filename
     
+    if not json_file.exists():
+        return jsonify({
+            'error': True,
+            'message': f'JSON file not found: {base_name}.json'
+        }), 404
+    
     try:
         # Choose extraction method
         if method == 'ai':
-            if not json_file.exists():
-                return jsonify({'error': True, 'message': f'JSON file not found: {base_name}.json'}), 404
+            # AI-powered extraction (most accurate)
             params_data = ai_extractor.extract_with_fallback(
                 str(json_file), 
                 str(py_file) if py_file.exists() else None
@@ -49,13 +57,12 @@ def extract_parameters(filename):
             markdown = ai_extractor.generate_markdown(params_data)
         
         elif method == 'intelligent':
-            if not json_file.exists():
-                return jsonify({'error': True, 'message': f'JSON file not found: {base_name}.json'}), 404
+            # Rule-based JSON parsing
             params_data = intelligent_extractor.extract_from_json(str(json_file))
             markdown = "# Parameters\n\n" + json.dumps(params_data['parameters'], indent=2)
         
         else:
-            # AST-based extraction (default — fast, reliable, no LLM needed)
+            # Legacy regex-based (fallback)
             if not py_file.exists():
                 return jsonify({
                     'error': True,
@@ -179,23 +186,13 @@ def regenerate_step(filename):
         api_logger.info(f"Regenerating {output_name} with updated parameters")
         step_file = pipeline.regenerate_from_updated_python(
             str(py_file), 
-            output_name,
-            open_freecad=False
+            output_name
         )
         
         api_logger.info(f"Successfully regenerated: {step_file}")
 
-        # Check for GLB (optional — may not exist)
-        glb_url = None
-        try:
-            from core import config as cfg
-            glb_dir = getattr(cfg, 'GLB_OUTPUT_DIR', None)
-            if glb_dir:
-                glb_file = glb_dir / f"{output_name}.glb"
-                if glb_file.exists():
-                    glb_url = f'/outputs/glb/{output_name}.glb'
-        except Exception:
-            pass
+        # Check for GLB
+        glb_file = config.GLB_OUTPUT_DIR / f"{output_name}.glb"
         
         return jsonify({
             'success': True,
@@ -203,7 +200,7 @@ def regenerate_step(filename):
             'message': f'Regenerated with {len(parameters)} updated parameters',
             'py_file': str(py_file),
             'step_file': step_file,
-            'glb_url': glb_url,
+            'glb_url': f'/outputs/glb/{output_name}.glb' if glb_file.exists() else None,
             'updated_parameters': list(parameters.keys())
         }), 200
         
@@ -379,3 +376,272 @@ def list_generated_files():
             'error': True,
             'message': f'Failed to list files: {str(e)}'
         }), 500
+@bp.route('/ocp/<filename>', methods=['GET'])
+def extract_ocp_parameters(filename):
+    """
+    Extract exact geometric parameters using OCP/CadQuery.
+    """
+    base_name = filename.replace('_generated.py', '').replace('.py', '').replace('.step', '')
+    step_file = config.STEP_OUTPUT_DIR / f"{base_name}.step"
+    
+    if not step_file.exists():
+        # Try to find it in the uploads dir if not in outputs
+        step_file = config.DATA_DIR / 'uploads' / f"{base_name}.step"
+        if not step_file.exists():
+            return jsonify({
+                'error': True,
+                'message': f'STEP file not found for {base_name}'
+            }), 404
+            
+    try:
+        features = step_analyzer.analyze(str(step_file))
+        return jsonify({
+            'success': True,
+            'filename': step_file.name,
+            'features': features
+        }), 200
+    except Exception as e:
+        api_logger.error(f"OCP extraction failed: {str(e)}")
+        return jsonify({
+            'error': True,
+            'message': f'Failed to extract OCP parameters: {str(e)}'
+        }), 500
+
+
+@bp.route('/regenerate-ocp/<filename>', methods=['POST'])
+def regenerate_ocp(filename):
+    """
+    Regenerate model based on OCP face edits using intermediate design representation.
+    
+    Flow: OCP Features → Intermediate Design → LLM → SCL JSON → STEP
+    
+    Request body: { 
+        "updates": [{id: "f0", type: "cylinder", radius: 15, location: [X,Y,Z]}, ...], 
+        "original_features": {...} 
+    }
+    """
+    base_name = filename.replace('_generated.py', '').replace('.py', '').replace('.step', '')
+    step_file = config.STEP_OUTPUT_DIR / f"{base_name}.step"
+    
+    if not step_file.exists():
+        step_file = config.DATA_DIR / 'uploads' / f"{base_name}.step"
+        if not step_file.exists():
+            return jsonify({'error': True, 'message': 'Original STEP file not found'}), 404
+
+    data = request.get_json()
+    updates = data.get('updates', [])
+    original_features = data.get('original_features', {})
+    
+    if not updates:
+        return jsonify({'error': True, 'message': 'No updates provided'}), 400
+
+    try:
+        # Step 1: Apply updates to original features
+        api_logger.info(f"[Regen-OCP] Applying {len(updates)} updates to geometry...")
+        updated_features = _apply_updates_to_features(original_features, updates)
+        
+        # Step 2: Convert updated features to intermediate design representation
+        from step_editor.geometric_interpreter import GeometricInterpreter, create_intermediate_prompt
+        
+        interpreter = GeometricInterpreter()
+        intermediate_design = interpreter.interpret(updated_features)
+        
+        api_logger.info(f"[Regen-OCP] Interpreted as: {intermediate_design.get('design_type')}")
+        api_logger.info(f"[Regen-OCP] Design description:\n{interpreter.to_description(intermediate_design)}")
+        
+        # Step 3: Build LLM prompt using intermediate representation
+        system_prompt = create_intermediate_prompt()
+        
+        intermediate_json_str = json.dumps(intermediate_design, indent=2)
+        user_request = f"""{intermediate_json_str}
+
+Additional Context:
+- Original model: {base_name}
+- User modifications: {len(updates)} geometric changes applied
+- Target: Generate parametric SCL JSON that matches this design exactly
+
+Remember:
+- Use sketch_scale that matches real dimensions
+- Position features accurately using moveTo
+- Maintain proper operation types (NewBody, Cut, Join)
+- Output ONLY valid SCL JSON"""
+
+        full_llm_prompt = f"{system_prompt}\n\n{user_request}"
+        
+        # Step 4: Call LLM to generate SCL JSON
+        from services.gemini_service import call_gemini
+        from services.ollama_service import call_ollama
+        
+        api_logger.info(f"[Regen-OCP] Calling LLM with intermediate design (prompt: {len(full_llm_prompt)} chars)")
+        
+        if config.LLM_PROVIDER == "ollama":
+            raw_response = call_ollama(full_llm_prompt, max_tokens=4096, temperature=0.1)
+        else:
+            raw_response = call_gemini(full_llm_prompt, max_tokens=8192, temperature=0.1)
+
+        # Step 5: Parse and validate JSON response
+        api_logger.info(f"[Regen-OCP] Parsing LLM response ({len(raw_response)} chars)...")
+        
+        raw_response = raw_response.strip()
+        
+        # Remove markdown code blocks if present
+        if raw_response.startswith("```"):
+            lines = raw_response.split("\n")
+            lines = lines[1:]
+            for i, line in enumerate(lines):
+                if line.strip().startswith("```"):
+                    lines = lines[:i]
+                    break
+            raw_response = "\n".join(lines).strip()
+        
+        # Extract JSON using regex as fallback
+        if not raw_response.startswith("{"):
+            match = re.search(r"\{[\s\S]*\}", raw_response)
+            if match:
+                raw_response = match.group()
+            else:
+                raise ValueError("No valid JSON object found in LLM response")
+        
+        # Parse the JSON
+        try:
+            scl_json = json.loads(raw_response)
+        except json.JSONDecodeError as e:
+            api_logger.error(f"[Regen-OCP] JSON parsing failed: {e}")
+            api_logger.error(f"[Regen-OCP] Response preview: {raw_response[:500]}...")
+            raise ValueError(f"LLM returned invalid JSON: {str(e)}")
+        
+        # Validate structure
+        if not isinstance(scl_json, dict):
+            raise ValueError("LLM response is not a JSON object")
+        
+        if "parts" not in scl_json:
+            raise ValueError("LLM response missing 'parts' key")
+        
+        if "part_1" not in scl_json.get("parts", {}):
+            raise ValueError("LLM response missing 'part_1' in parts")
+        
+        # Set defaults if missing
+        if "units" not in scl_json:
+            scl_json["units"] = "mm"
+            api_logger.info("[Regen-OCP] Added default units: mm")
+        
+        if "final_name" not in scl_json:
+            scl_json["final_name"] = f"{base_name}_edited"
+            api_logger.info(f"[Regen-OCP] Added default final_name: {scl_json['final_name']}")
+        
+        # Step 6: Generate new STEP from SCL JSON
+        api_logger.info("[Regen-OCP] Generating STEP file from SCL JSON...")
+        pipeline = SynthoCadPipeline()
+        result = pipeline.process_from_json(scl_json)
+        
+        result['base_name'] = base_name
+        result['intermediate_design'] = intermediate_design  # Include for debugging
+        
+        api_logger.info(f"[Regen-OCP] SUCCESS: {result.get('step_file', 'unknown')}")
+        
+        return jsonify(result), 200
+
+    except ValueError as e:
+        api_logger.error(f"[Regen-OCP] Validation error: {str(e)}")
+        return jsonify({'error': True, 'message': f"Invalid response from LLM: {str(e)}"}), 400
+    except json.JSONDecodeError as e:
+        api_logger.error(f"[Regen-OCP] JSON decode error: {str(e)}")
+        return jsonify({'error': True, 'message': f"Failed to parse LLM response: {str(e)}"}), 500
+    except Exception as e:
+        api_logger.error(f"[Regen-OCP] Regeneration failed: {str(e)}", exc_info=True)
+        return jsonify({'error': True, 'message': f"Model regeneration failed: {str(e)}"}), 500
+
+
+def _apply_updates_to_features(original_features: Dict, updates: List[Dict]) -> Dict:
+    """
+    Apply user modifications to the original OCP features.
+    
+    This creates a modified feature set that reflects the user's requested changes.
+    """
+    import copy
+    updated = copy.deepcopy(original_features)
+    
+    for update in updates:
+        face_id = update.get('id')
+        face_type = update.get('type')
+        
+        # Find and update the corresponding feature
+        if face_type == 'cylinder':
+            for cyl in updated.get('cylinders', []):
+                if cyl.get('id') == face_id:
+                    if 'radius_mm' in update:
+                        cyl['radius_mm'] = update['radius_mm']
+                    if 'location' in update:
+                        cyl['location'] = update['location']
+                    break
+        
+        elif face_type == 'plane':
+            for plane in updated.get('planes', []):
+                if plane.get('id') == face_id:
+                    if 'dims' in update:
+                        plane['dims'] = update['dims']
+                    if 'location' in update:
+                        plane['location'] = update['location']
+                    break
+    
+    return updated
+
+
+# ── Panel History API ─────────────────────────────────────────────────────────
+
+PANEL_HISTORY_FILE = Path(__file__).parent.parent.parent / 'data' / 'panel_history.json'
+_VALID_PANELS = {'viewer3d', 'preview', 'json', 'python', 'step', 'parameters'}
+
+
+def _load_panel_history() -> Dict:
+    """Load the panel history JSON from disk, returning an empty dict on error."""
+    if PANEL_HISTORY_FILE.exists():
+        try:
+            with open(PANEL_HISTORY_FILE, 'r') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {p: [] for p in _VALID_PANELS}
+
+
+def _save_panel_history(data: Dict) -> None:
+    """Persist the panel history dict to disk."""
+    PANEL_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(PANEL_HISTORY_FILE, 'w') as f:
+        json.dump(data, f, indent=2)
+
+
+@bp.route('/history/<panel_id>', methods=['GET'])
+def get_panel_history(panel_id):
+    """Return the history entries for a specific panel."""
+    history = _load_panel_history()
+    entries = history.get(panel_id, [])
+    return jsonify({'success': True, 'panel_id': panel_id, 'entries': entries}), 200
+
+
+@bp.route('/history/<panel_id>', methods=['POST'])
+def add_panel_history_entry(panel_id):
+    """Append a new entry to a panel's history."""
+    from datetime import datetime, timezone
+    data = request.get_json(silent=True) or {}
+    entry = {
+        'name': data.get('name', 'unnamed'),
+        'source': data.get('source', 'unknown'),
+        'url': data.get('url') or None,
+        'timestamp': datetime.now(timezone.utc).isoformat(),
+    }
+    history = _load_panel_history()
+    if panel_id not in history:
+        history[panel_id] = []
+    history[panel_id].insert(0, entry)   # newest first
+    _save_panel_history(history)
+    return jsonify({'success': True, 'entry': entry}), 200
+
+
+@bp.route('/history/<panel_id>', methods=['DELETE'])
+def clear_panel_history(panel_id):
+    """Clear all history entries for a specific panel."""
+    history = _load_panel_history()
+    history[panel_id] = []
+    _save_panel_history(history)
+    return jsonify({'success': True, 'panel_id': panel_id}), 200

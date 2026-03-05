@@ -102,8 +102,16 @@ def _validate_structural_integrity(json_data: Dict) -> Tuple[List[str], List[str
         op = ext.get("operation") or rev.get("operation")
         if op and op != "NewBodyFeatureOperation":
             errors.append(f"part_1 must use 'NewBodyFeatureOperation', found '{op}'")
+        
+        # Check for misplaced operation on part_1
+        if "operation" in first_part:
+            errors.append("part_1: 'operation' must be inside 'extrusion' or 'revolve', not on the part itself")
 
     for part_key, part_data in parts.items():
+        # Check for common mistake: operation directly on part
+        if "operation" in part_data:
+            errors.append(f"{part_key}: 'operation' must be inside 'extrusion' or 'revolve', not on the part itself")
+        
         has_sketch = "sketch" in part_data
         has_revolve = "revolve_profile" in part_data
         has_hole = "hole_feature" in part_data
@@ -286,6 +294,40 @@ def repair_json(json_data: Dict[str, Any]) -> Tuple[Dict[str, Any], List[str]]:
             repairs.append(f"part_1: Changed revolve operation from '{old_op}' to 'NewBodyFeatureOperation'")
 
     for part_key, part_data in parts.items():
+        # Fix misplaced 'operation' property (LLM often puts it on part instead of extrusion/revolve)
+        if "operation" in part_data:
+            misplaced_op = part_data.pop("operation")
+            
+            # Move to extrusion if sketch exists
+            if "sketch" in part_data:
+                if "extrusion" not in part_data:
+                    part_data["extrusion"] = {
+                        "extrude_depth_towards_normal": 1.0,
+                        "extrude_depth_opposite_normal": 0.0,
+                        "sketch_scale": 1.0,
+                        "operation": misplaced_op
+                    }
+                    repairs.append(f"{part_key}: Moved misplaced 'operation' to extrusion (added missing extrusion)")
+                elif "operation" not in part_data["extrusion"]:
+                    part_data["extrusion"]["operation"] = misplaced_op
+                    repairs.append(f"{part_key}: Moved misplaced 'operation' to extrusion")
+            
+            # Move to revolve if revolve_profile exists
+            elif "revolve_profile" in part_data:
+                if "revolve" not in part_data:
+                    part_data["revolve"] = {
+                        "axis": "Z",
+                        "angle": 360.0,
+                        "origin": [0.0, 0.0],
+                        "operation": misplaced_op
+                    }
+                    repairs.append(f"{part_key}: Moved misplaced 'operation' to revolve (added missing revolve)")
+                elif "operation" not in part_data["revolve"]:
+                    part_data["revolve"]["operation"] = misplaced_op
+                    repairs.append(f"{part_key}: Moved misplaced 'operation' to revolve")
+            else:
+                repairs.append(f"{part_key}: Removed orphaned 'operation' property (no sketch or revolve_profile)")
+        
         if "coordinate_system" not in part_data:
             part_data["coordinate_system"] = {
                 "Euler Angles": [0.0, 0.0, 0.0],

@@ -5,7 +5,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SynthoCAD</title>
-    <link rel="stylesheet" href="css/style.css">
+    <link rel="stylesheet" href="css/style.css?v=10">
 
     <!-- Three.js r128 + OrbitControls via CDN (r128 is the last version with stable global THREE.OrbitControls) -->
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
@@ -28,56 +28,78 @@
         <main class="main">
             <!-- Left Column: Input Controls (30%) -->
             <aside class="left-column">
-                <!-- Section A: Prompt Input -->
-                <section class="input-section">
+
+                <!-- Mode Tabs (always visible at top) -->
+                <div class="left-mode-tabs">
                     <div class="mode-tabs">
                         <button id="mode-prompt-btn" class="mode-tab active">Prompt</button>
                         <button id="mode-edit-btn" class="mode-tab">Edit</button>
                     </div>
-                    <div class="prompt-wrapper">
-                        <textarea id="prompt-input" class="prompt-textarea"
-                            placeholder="Create a cylinder diameter 20mm height 50mm with center hole 5mm"
-                            rows="3"></textarea>
-                        <button id="prompt-edit-btn" class="prompt-edit-btn hidden"
-                            title="Prompt modified — click Generate to regenerate">
-                            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16"
-                                height="16">
-                                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                            </svg>
-                        </button>
-                    </div>
-                    <div class="prompt-btn-row">
-                        <button id="generate-btn" class="generate-btn">Generate</button>
-                    </div>
-                    <div id="error-message" class="error-message"></div>
-                </section>
+                </div>
 
-                <!-- Section B: Templates -->
-                <section class="templates-section">
-                    <label class="section-label">TEMPLATES</label>
-                    <div id="templates-list" class="templates-list"></div>
-                </section>
+                <!-- ── Prompt Mode ─────────────────────────────── -->
+                <div id="mode-section-prompt" class="mode-section">
 
-                <!-- Section C: Upload STEP -->
-                <section class="upload-section">
-                    <label class="section-label">UPLOAD STEP</label>
-                    <div id="drop-zone" class="drop-zone">
-                        <input type="file" id="step-file-input" accept=".step,.stp" class="drop-zone-input">
-                        <div class="drop-zone-content">
-                            <svg class="drop-zone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                                stroke-width="1.5">
-                                <path stroke-linecap="round" stroke-linejoin="round"
-                                    d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
-                            </svg>
-                            <span id="drop-zone-text">Drop .step file or click to browse</span>
+                    <!-- Section A: Prompt Input -->
+                    <section class="input-section">
+                        <div class="prompt-wrapper">
+                            <textarea id="prompt-input" class="prompt-textarea"
+                                placeholder="Create a cylinder diameter 20mm height 50mm with center hole 5mm"
+                                rows="3"></textarea>
                         </div>
+                        <div class="prompt-btn-row">
+                            <button id="generate-btn" class="generate-btn">Generate</button>
+                        </div>
+                        <div id="error-message" class="error-message"></div>
+                    </section>
+
+                    <!-- Section B: Templates -->
+                    <section class="templates-section">
+                        <label class="section-label">TEMPLATES</label>
+                        <select id="templates-select" class="templates-select">
+                            <option value="">Quick load a template…</option>
+                        </select>
+                    </section>
+
+                </div><!-- /mode-section-prompt -->
+
+                <!-- ── Edit Mode ───────────────────────────────── -->
+                <div id="mode-section-edit" class="mode-section hidden">
+
+                    <!-- Section C: Upload STEP -->
+                    <section class="upload-section upload-section-edit">
+                        <label class="section-label">UPLOAD STEP</label>
+                        <div id="drop-zone" class="drop-zone">
+                            <input type="file" id="step-file-input" accept=".step,.stp" class="drop-zone-input">
+                            <div class="drop-zone-content">
+                                <svg class="drop-zone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                                    stroke-width="1.5">
+                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                        d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
+                                </svg>
+                                <span id="drop-zone-text">Drop .step file or click to browse</span>
+                            </div>
+                        </div>
+                        <div class="upload-btn-row">
+                            <button id="preview-btn" class="preview-btn" disabled>7-View Preview</button>
+                            <button id="view3d-btn" class="view3d-btn" disabled>View 3D</button>
+                        </div>
+                        <div id="preview-error" class="error-message"></div>
+                    </section>
+
+                    <!-- Section D: Edit STEP prompt (revealed after preview) -->
+                    <div id="edit-area" class="edit-area-section hidden">
+                        <label class="section-label">EDIT STEP</label>
+                        <textarea id="edit-prompt-input" class="prompt-textarea"
+                            placeholder="Describe the edit, e.g. change radius of f0 to 8mm" rows="3"></textarea>
+                        <div class="prompt-btn-row">
+                            <button id="edit-btn" class="generate-btn">Edit STEP</button>
+                        </div>
+                        <div id="edit-error" class="error-message"></div>
                     </div>
-                    <div class="upload-btn-row">
-                        <button id="render3d-btn" class="preview-btn" disabled>Render 3D</button>
-                    </div>
-                    <div id="upload-error" class="error-message"></div>
-                </section>
+
+                </div><!-- /mode-section-edit -->
+
             </aside>
 
             <!-- Center Column: Output Viewers (40%) -->
@@ -168,6 +190,40 @@
                 <div class="right-params-header">
                     <label class="section-label">PARAMETERS</label>
                 </div>
+
+                <!-- ── Face Groups Panel ───────────────────────────────── -->
+                <div class="groups-panel" id="groups-panel">
+                    <div class="groups-panel-header">
+                        <label class="section-label">FACE GROUPS</label>
+                        <button id="group-mode-btn" class="group-mode-btn" onclick="toggleGroupMode()" title="Enter selection mode to create groups">
+                            ⊕ Select
+                        </button>
+                    </div>
+
+                    <!-- Selection-mode toolbar (revealed when active) -->
+                    <div id="group-mode-bar" class="group-mode-bar hidden">
+                        <div class="group-sel-row">
+                            <span class="group-sel-info">
+                                <span id="group-sel-count">0</span> face(s) selected
+                            </span>
+                            <button class="group-sel-clear" onclick="clearFaceSelection()" title="Clear selection">✕ Clear</button>
+                        </div>
+                        <div class="group-create-row">
+                            <input id="group-name-input" class="group-name-input" type="text"
+                                placeholder="e.g. holes, bosses, shafts…" maxlength="30"
+                                onkeydown="if(event.key==='Enter') createGroupFromSelection()">
+                            <button class="group-create-btn" onclick="createGroupFromSelection()">Save</button>
+                        </div>
+                    </div>
+
+                    <!-- Existing groups list -->
+                    <div id="groups-list" class="groups-list">
+                        <p class="groups-empty-msg" id="groups-empty-msg">
+                            No groups yet — click <strong>⊕ Select</strong>, pick faces&nbsp;in the panel below, then save a group.
+                        </p>
+                    </div>
+                </div><!-- /groups-panel -->
+
                 <div class="right-params-body">
                     <div id="parameters-form" class="parameters-form">
                         <p class="params-placeholder">Generate a model to edit parameters</p>
@@ -187,11 +243,31 @@
 
         <!-- Toast Container -->
         <div id="toast-container" class="toast-container"></div>
-    </div>
 
-    <script src="js/api.js?v=4"></script>
-    <script src="js/step-viewer.js?v=4"></script>
-    <script src="js/app.js?v=4"></script>
+        <!-- History Sidebar (slide-in drawer) -->
+        <div id="history-overlay" class="history-overlay" onclick="closeHistorySidebar()"></div>
+        <div id="history-sidebar" class="history-sidebar">
+            <div class="history-sidebar-header">
+                <span id="history-sidebar-title">History</span>
+                <button class="history-close-btn" onclick="closeHistorySidebar()">✕</button>
+            </div>
+            <div id="history-sidebar-list" class="history-sidebar-list"></div>
+            <div class="history-sidebar-footer">
+                <button class="history-clear-btn" onclick="clearCurrentPanelHistory()">Clear History</button>
+            </div>
+        </div>
+
+        <!-- Hidden GLB model-viewer stubs (used only when GLB output is available) -->
+        <div id="viewer3d-placeholder" style="display:none;"></div>
+        <div id="viewer3d-container" style="display:none;">
+            <model-viewer id="model-viewer" camera-controls auto-rotate></model-viewer>
+        </div>
+
+    </div><!-- /.app -->
+
+    <script src="js/api.js?v=10"></script>
+    <script src="js/step-viewer.js?v=10"></script>
+    <script src="js/app.js?v=10"></script>
 </body>
 
 </html>

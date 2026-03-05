@@ -14,63 +14,28 @@ const state = {
     previewFile: null,          // Currently selected File object for preview
     previewImageUrls: [],       // [{view, label, url}] from last preview
     previewFeatures: null,      // features dict from last preview
-    lastGeneratedPrompt: null,  // prompt used for last generation (pencil icon)
+    panelHistory: {},           // panel_id -> entries[]
+    ocpFeatures: null,          // exact geometric features from last OCP extraction
+    // ── Face Groups ──────────────────────────────────────────────────
+    faceGroups: {},             // { groupName: { faces: ['f0','f2'], color: '#...' } }
+    selectedFaces: new Set(),   // face IDs currently selected in group-mode
+    groupMode: false,           // whether selection mode is active
 };
 
-/** Reset upload-related UI and state */
-function clearUploadState() {
-    state.previewFile = null;
-    state.previewImageUrls = [];
-    state.previewFeatures = null;
-    const dz = DOM.dropZone();
-    if (dz) { dz.classList.remove('has-file'); }
-    const dzt = DOM.dropZoneText();
-    if (dzt) { dzt.textContent = 'Drop .step file or click to browse'; }
-    const fi = DOM.stepFileInput();
-    if (fi) { fi.value = ''; }
-    const r3d = DOM.render3dBtn();
-    if (r3d) { r3d.disabled = true; }
-    const ue = DOM.uploadError();
-    if (ue) { ue.textContent = ''; }
-    // Reset step code viewer for uploads
-    const scc = document.getElementById('step-code-container');
-    if (scc) scc.style.display = 'none';
-}
-
-/** Reset generate-related UI and state */
-function clearGenerateState() {
-    state.currentModel = null;
-    state.parameters = [];
-    state.lastGeneratedPrompt = null;
-    DOM.promptInput().value = '';
-    const editBtn = DOM.promptEditBtn();
-    if (editBtn) editBtn.classList.add('hidden');
-    // Reset viewers
-    const jv = DOM.jsonViewer();
-    if (jv) jv.textContent = 'Generate a model to view JSON output';
-    const pv = DOM.pythonViewer();
-    if (pv) pv.textContent = 'Generate a model to view Python code';
-    const si = DOM.stepInfo();
-    if (si) si.innerHTML = '<p class="step-placeholder">Generate a model to view STEP file</p>';
-    const scc = document.getElementById('step-code-container');
-    if (scc) scc.style.display = 'none';
-    const pf = DOM.parametersForm();
-    if (pf) pf.innerHTML = '<p class="params-placeholder">Generate a model to edit parameters</p>';
-    DOM.regenerateBtn().classList.add('hidden');
-    // Deselect template
-    const list = DOM.templatesSelect();
-    if (list) list.querySelectorAll('.template-item').forEach(el => el.classList.remove('active'));
-}
+// Colour palette cycled for successive groups
+const GROUP_COLORS = [
+    '#60a5fa', '#34d399', '#f472b6', '#fb923c',
+    '#a78bfa', '#facc15', '#22d3ee', '#f87171',
+];
 
 // ========================================
 // DOM References
 // ========================================
 const DOM = {
     promptInput: () => document.getElementById('prompt-input'),
-    promptEditBtn: () => document.getElementById('prompt-edit-btn'),
     generateBtn: () => document.getElementById('generate-btn'),
     errorMessage: () => document.getElementById('error-message'),
-    templatesSelect: () => document.getElementById('templates-list'),
+    templatesSelect: () => document.getElementById('templates-select'),
     regenerateBtn: () => document.getElementById('regenerate-btn'),
     loadingOverlay: () => document.getElementById('loading-overlay'),
     loadingMessage: () => document.getElementById('loading-message'),
@@ -84,12 +49,24 @@ const DOM = {
     viewer3dContainer: () => document.getElementById('viewer3d-container'),
     modelViewer: () => document.getElementById('model-viewer'),
     visualizeBtn: () => document.getElementById('visualize-btn'),
+    // Face Groups
+    groupModeBtn: () => document.getElementById('group-mode-btn'),
+    groupModeBar: () => document.getElementById('group-mode-bar'),
+    groupSelCount: () => document.getElementById('group-sel-count'),
+    groupNameInput: () => document.getElementById('group-name-input'),
+    groupsList: () => document.getElementById('groups-list'),
+    groupsEmptyMsg: () => document.getElementById('groups-empty-msg'),
     // Upload / Preview
     dropZone: () => document.getElementById('drop-zone'),
     stepFileInput: () => document.getElementById('step-file-input'),
     dropZoneText: () => document.getElementById('drop-zone-text'),
-    render3dBtn: () => document.getElementById('render3d-btn'),
-    uploadError: () => document.getElementById('upload-error'),
+    previewBtn: () => document.getElementById('preview-btn'),
+    view3dBtn: () => document.getElementById('view3d-btn'),
+    previewError: () => document.getElementById('preview-error'),
+    editArea: () => document.getElementById('edit-area'),
+    editPromptInput: () => document.getElementById('edit-prompt-input'),
+    editBtn: () => document.getElementById('edit-btn'),
+    editError: () => document.getElementById('edit-error'),
     // Preview gallery
     previewPlaceholder: () => document.getElementById('preview-placeholder'),
     previewViewer: () => document.getElementById('preview-viewer'),
@@ -108,39 +85,37 @@ async function initApp() {
     await loadTemplates();
     // Initialise the Three.js viewer (non-blocking — WASM loads in background)
     stepViewer.init();
+    // Register face-click callback so 3D viewer clicks feed into group selection
+    stepViewer.setFaceClickCallback((faceId) => {
+        if (state.groupMode) _toggleFaceSelection(faceId);
+    });
 }
 
 function setupEventListeners() {
     // Generate button
     DOM.generateBtn().addEventListener('click', handleGenerate);
 
-    // Enter key in prompt (Ctrl+Enter)
+    // Enter key in prompt — only fire when Prompt mode is active
     DOM.promptInput().addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && e.ctrlKey) handleGenerate();
-    });
-
-    // Pencil icon — show modified state when prompt changes after generation
-    DOM.promptInput().addEventListener('input', () => {
-        const editBtn = DOM.promptEditBtn();
-        if (!editBtn || !state.currentModel) return;
-        const current = DOM.promptInput().value.trim();
-        if (current !== state.lastGeneratedPrompt) {
-            editBtn.classList.add('modified');
-        } else {
-            editBtn.classList.remove('modified');
+        if (e.key === 'Enter' && e.ctrlKey) {
+            const editSection = document.getElementById('mode-section-edit');
+            if (editSection && !editSection.classList.contains('hidden')) return; // edit mode active
+            handleGenerate();
         }
     });
 
-    // Pencil icon click — focus the textarea
-    const pencilBtn = DOM.promptEditBtn();
-    if (pencilBtn) {
-        pencilBtn.addEventListener('click', () => DOM.promptInput().focus());
-    }
+    // Ctrl+Enter in edit prompt → handleEditStep
+    DOM.editPromptInput().addEventListener('keydown', (e) => {
+        if (e.key === 'Enter' && e.ctrlKey) {
+            e.preventDefault();
+            handleEditStep();
+        }
+    });
 
-    // Templates list
-    // (event delegation handled inside loadTemplates)
+    // Templates dropdown
+    DOM.templatesSelect().addEventListener('change', handleTemplateSelect);
 
-    // Regenerate button (parameters)
+    // Regenerate button
     DOM.regenerateBtn().addEventListener('click', handleRegenerate);
 
     // Visualize button (3D viewer)
@@ -148,15 +123,36 @@ function setupEventListeners() {
 
     // Tab switching
     document.querySelectorAll('.tab').forEach(tab => {
-        tab.addEventListener('click', () => {
-            switchTab(tab.dataset.tab);
-        });
+        tab.addEventListener('click', () => switchTab(tab.dataset.tab));
     });
 
-    // ── Upload / Render 3D ──────────────────────────────────────────────────
+    // ── Mode tab switching ────────────────────────────────────────────────
+    const modePromptBtn = document.getElementById('mode-prompt-btn');
+    const modeEditBtn   = document.getElementById('mode-edit-btn');
+    const modeSectionPrompt = document.getElementById('mode-section-prompt');
+    const modeSectionEdit   = document.getElementById('mode-section-edit');
+
+    if (modePromptBtn && modeEditBtn) {
+        modePromptBtn.addEventListener('click', () => {
+            modePromptBtn.classList.add('active');
+            modeEditBtn.classList.remove('active');
+            if (modeSectionPrompt) modeSectionPrompt.classList.remove('hidden');
+            if (modeSectionEdit)   modeSectionEdit.classList.add('hidden');
+        });
+        modeEditBtn.addEventListener('click', () => {
+            modeEditBtn.classList.add('active');
+            modePromptBtn.classList.remove('active');
+            if (modeSectionEdit)   modeSectionEdit.classList.remove('hidden');
+            if (modeSectionPrompt) modeSectionPrompt.classList.add('hidden');
+        });
+    }
+
+    // ── Upload / Preview ──────────────────────────────────────────────────
     const dropZone = DOM.dropZone();
     const fileInput = DOM.stepFileInput();
 
+    // The file input already covers the entire drop zone (position:absolute, full size),
+    // so clicks propagate naturally — no extra click listener needed (that caused double dialog).
     fileInput.addEventListener('change', () => {
         const file = fileInput.files[0];
         if (file) selectStepFile(file);
@@ -175,24 +171,31 @@ function setupEventListeners() {
         if (file && (file.name.endsWith('.step') || file.name.endsWith('.stp'))) {
             selectStepFile(file);
         } else {
-            DOM.uploadError().textContent = 'Only .step / .stp files are accepted.';
+            DOM.previewError().textContent = 'Only .step / .stp files are accepted.';
         }
     });
 
-    // Render 3D button
-    DOM.render3dBtn().addEventListener('click', handleRender3D);
+    // Preview button
+    DOM.previewBtn().addEventListener('click', handlePreview);
+
+    // View 3D button
+    DOM.view3dBtn().addEventListener('click', async () => {
+        if (!state.previewFile) return;
+        switchTab('viewer3d');
+        await stepViewer.loadStepFile(state.previewFile);
+        addToHistory(state.previewFile);
+        // Auto-load parameters & feed face features to the 3D viewer
+        await loadParameters();
+        if (state.ocpFeatures) stepViewer.setFaceFeatures(state.ocpFeatures);
+    });
+
+    // Edit STEP button
+    DOM.editBtn().addEventListener('click', handleEditStep);
 }
 
 // ========================================
 // Tab Management
 // ========================================
-/** Show only the tabs whose data-tab is in the given list */
-function setVisibleTabs(visibleList) {
-    document.querySelectorAll('.tab').forEach(tab => {
-        tab.style.display = visibleList.includes(tab.dataset.tab) ? '' : 'none';
-    });
-}
-
 function switchTab(tabName) {
     document.querySelectorAll('.tab').forEach(tab => {
         tab.classList.toggle('active', tab.dataset.tab === tabName);
@@ -200,20 +203,27 @@ function switchTab(tabName) {
     document.querySelectorAll('.tab-panel').forEach(panel => {
         panel.classList.toggle('active', panel.id === `panel-${tabName}`);
     });
-    if (state.currentModel) {
+    if (state.currentModel || state.previewFile) {
         loadTabContent(tabName);
     }
 }
 
 async function loadTabContent(tabName) {
-    if (!state.currentModel) return;
-    const baseName = state.currentModel.baseName;
+    // The parameters tab works with both generated models and uploaded files.
+    // All other tabs require a generated model (currentModel).
+    if (!state.currentModel && tabName !== 'parameters') return;
     try {
         switch (tabName) {
-            case 'json': await loadJsonContent(baseName); break;
-            case 'python': await loadPythonContent(baseName); break;
-            case 'step': await loadStepContent(baseName); break;
             case 'parameters': await loadParameters(); break;
+            default: {
+                if (!state.currentModel) return;
+                const baseName = state.currentModel.baseName;
+                switch (tabName) {
+                    case 'json': await loadJsonContent(baseName); break;
+                    case 'python': await loadPythonContent(baseName); break;
+                    case 'step': await loadStepContent(baseName); break;
+                }
+            }
         }
     } catch (error) {
         console.error(`Failed to load ${tabName}:`, error);
@@ -279,165 +289,396 @@ async function loadStepContent(baseName) {
 async function loadParameters() {
     const form = DOM.parametersForm();
     const regenBtn = DOM.regenerateBtn();
-    if (!state.currentModel) {
-        form.innerHTML = '<p class="params-placeholder">Generate a model to edit parameters</p>';
+
+    if (!state.currentModel && !state.previewFile) {
+        form.innerHTML = '<p class="params-placeholder">Upload or generate a model to edit parameters</p>';
         regenBtn.classList.add('hidden');
         return;
     }
+
+    // For generated models use the STEP filename; for uploads use the file name directly.
+    // The backend /ocp/<filename> endpoint searches both outputs/step/ and data/uploads/.
+    const filename = state.currentModel
+        ? (extractFilename(state.currentModel.step_file || state.currentModel.py_file || ''))
+        : state.previewFile.name;
+
+    form.innerHTML = '<p class="params-placeholder">Analyzing geometry...</p>';
+
+    // For uploaded files, ensure the file is on the backend so OCP can read it.
+    if (!state.currentModel && state.previewFile) {
+        try {
+            await api.uploadStepFile(state.previewFile);
+        } catch (uploadErr) {
+            console.warn('Pre-upload for OCP failed:', uploadErr);
+            // Continue anyway — the file might already be there from a previous upload.
+        }
+    }
+
     try {
-        const filename = extractFilename(state.currentModel.py_file);
-        const result = await api.extractParameters(filename);
-        if (!result.parameters || result.parameters.length === 0) {
-            form.innerHTML = '<p class="params-placeholder">No editable parameters found</p>';
+        const result = await api.getOcpParameters(filename);
+        if (!result.features) {
+            form.innerHTML = '<p class="params-placeholder">No geometric features found</p>';
             regenBtn.classList.add('hidden');
             return;
         }
-        state.parameters = result.parameters;
+
+        state.ocpFeatures = result.features;
         regenBtn.classList.remove('hidden');
-        form.innerHTML = result.parameters.map((param, i) => `
-            <div class="param-row">
-                <span class="param-name" title="${param.name}">${param.description || param.name}</span>
-                <span class="param-type">${param.unit || param.type}</span>
-                <input 
-                    type="number" 
-                    class="param-input" 
-                    id="param-${i}"
-                    value="${param.value}"
-                    min="${param.min != null ? param.min : ''}"
-                    max="${param.max != null ? param.max : ''}"
-                    step="0.1"
-                />
-            </div>
-        `).join('');
+        renderOcpParameters(result.features);
+        // Pass feature index to the 3D viewer for face-click tooltips
+        stepViewer.setFaceFeatures(result.features);
+
     } catch (error) {
         form.innerHTML = `<p class="params-placeholder">Error: ${error.message}</p>`;
         regenBtn.classList.add('hidden');
     }
 }
 
-/**
- * Read an uploaded STEP file client-side and show the raw text in the STEP tab.
- */
-function loadUploadedStepContent(file) {
-    const infoEl = document.getElementById('step-info');
-    const codeContainer = document.getElementById('step-code-container');
-    const codeViewer = document.getElementById('step-code-viewer');
+function renderOcpParameters(features) {
+    const form = DOM.parametersForm();
+    let html = '';
 
-    // Show file metadata
-    const sizeKB = (file.size / 1024).toFixed(1);
-    infoEl.innerHTML = `
-        <div class="step-details">
-            <div class="step-row">
-                <span class="step-label">Filename</span>
-                <span class="step-value">${file.name}</span>
-            </div>
-            <div class="step-row">
-                <span class="step-label">Size</span>
-                <span class="step-value">${sizeKB} KB</span>
-            </div>
-        </div>
-    `;
+    // 0. Recognised shape blocks (from ShapeRecognizer)
+    if (features.blocks && features.blocks.length > 0) {
+        html += `<div class="ocp-section-title">Recognised Shapes</div>`;
+        features.blocks.forEach((blk) => {
+            const shape = (blk.shape_type || 'unknown').replace(/_/g, ' ')
+                .replace(/\b\w/g, c => c.toUpperCase());
+            const confPct = blk.confidence != null ? Math.round(blk.confidence * 100) : 0;
+            const confColor = confPct >= 80 ? '#4ade80' : confPct >= 55 ? '#facc15' : '#f87171';
+            const params = blk.parameters || {};
+            const paramLines = Object.entries(params)
+                .filter(([k]) => !k.includes('axis'))   // skip raw axis vectors
+                .map(([k, v]) => {
+                    const label = k.replace(/_/g, ' ');
+                    const value = typeof v === 'number' ? v.toFixed(3) : v;
+                    return `<div class="ocp-row"><label>${label}</label><span class="ocp-static">${value}</span></div>`;
+                }).join('');
+            html += `
+                <div class="ocp-card ocp-card-block" data-component="${blk.component_index}">
+                    <div class="ocp-card-header">
+                        <span class="ocp-face-id">Block ${blk.component_index}</span>
+                        <span class="ocp-face-type">${shape}</span>
+                        <span class="ocp-conf-badge" style="background:${confColor}22;color:${confColor};border:1px solid ${confColor}55">${confPct}%</span>
+                    </div>
+                    <div class="ocp-row ocp-summary-row">
+                        <span class="ocp-summary">${blk.summary || ''}</span>
+                    </div>
+                    ${paramLines}
+                    <div class="ocp-row">
+                        <label>Faces</label>
+                        <span class="ocp-static face-ids-list">${(blk.face_ids || []).join(', ')}</span>
+                    </div>
+                </div>
+            `;
+        });
+    }
 
-    // Read and display raw STEP text
-    const reader = new FileReader();
-    reader.onload = () => {
-        codeViewer.textContent = reader.result;
-        codeContainer.style.display = '';
-    };
-    reader.onerror = () => {
-        codeViewer.textContent = 'Failed to read file.';
-        codeContainer.style.display = '';
-    };
-    reader.readAsText(file);
+    // 1. Cylinders
+    if (features.cylinders && features.cylinders.length > 0) {
+        html += `<div class="ocp-section-title">Cylindrical Faces</div>`;
+        features.cylinders.forEach((c) => {
+            html += `
+                <div class="ocp-card" data-face-id="${c.id}" data-type="cylinder" onclick="handleFaceCardClick(event,'${c.id}')">
+                    <div class="ocp-card-header">
+                        <span class="ocp-face-id">${c.id.toUpperCase()}</span>
+                        <span class="ocp-face-type">Cylinder</span>
+                        <div class="face-group-dots" id="gdots-${c.id}"></div>
+                    </div>
+                    <div class="ocp-row">
+                        <label>Radius (mm)</label>
+                        <input type="number" class="ocp-input" data-key="radius_mm" value="${c.radius_mm}" data-original="${c.radius_mm}" step="0.1">
+                    </div>
+                    <div class="ocp-row">
+                        <label>Location (X, Y, Z)</label>
+                        <div class="ocp-xyz">
+                            <input type="number" class="ocp-input-small" data-key="loc-x" value="${c.location[0]}" data-original="${c.location[0]}" step="0.5">
+                            <input type="number" class="ocp-input-small" data-key="loc-y" value="${c.location[1]}" data-original="${c.location[1]}" step="0.5">
+                            <input type="number" class="ocp-input-small" data-key="loc-z" value="${c.location[2]}" data-original="${c.location[2]}" step="0.5">
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+    }
+
+    // 2. Planes
+    if (features.planes && features.planes.length > 0) {
+        html += `<div class="ocp-section-title">Planar Faces</div>`;
+        features.planes.forEach((p) => {
+            html += `
+                <div class="ocp-card" data-face-id="${p.id}" data-type="plane" onclick="handleFaceCardClick(event,'${p.id}')">
+                    <div class="ocp-card-header">
+                        <span class="ocp-face-id">${p.id.toUpperCase()}</span>
+                        <span class="ocp-face-type">${p.face_type || 'Plane'}</span>
+                        <div class="face-group-dots" id="gdots-${p.id}"></div>
+                    </div>
+                    <div class="ocp-row">
+                        <label>Dimensions (mm)</label>
+                        <div class="ocp-xyz">
+                            <input type="number" class="ocp-input" data-key="dim-0" value="${p.dims[0]}" data-original="${p.dims[0]}" step="1">
+                            <span>×</span>
+                            <input type="number" class="ocp-input" data-key="dim-1" value="${p.dims[1]}" data-original="${p.dims[1]}" step="1">
+                        </div>
+                    </div>
+                    <div class="ocp-row">
+                        <label>Location (X, Y, Z)</label>
+                        <div class="ocp-xyz">
+                            <input type="number" class="ocp-input-small" data-key="loc-x" value="${p.location[0]}" data-original="${p.location[0]}" step="0.5">
+                            <input type="number" class="ocp-input-small" data-key="loc-y" value="${p.location[1]}" data-original="${p.location[1]}" step="0.5">
+                            <input type="number" class="ocp-input-small" data-key="loc-z" value="${p.location[2]}" data-original="${p.location[2]}" step="0.5">
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+    }
+
+    if (!html) html = '<p class="params-placeholder">No editable features found.</p>';
+    form.innerHTML = html;
+
+    // Restore group-mode class + selection state after re-render
+    _applyGroupModeToForm();
+    _refreshAllGroupDots();
+}
+
+// ========================================
+// Face Groups
+// ========================================
+
+/** Toggle group-selection mode on/off. */
+function toggleGroupMode() {
+    state.groupMode = !state.groupMode;
+    const btn = DOM.groupModeBtn();
+    const bar = DOM.groupModeBar();
+
+    if (state.groupMode) {
+        btn.textContent = '✓ Done';
+        btn.classList.add('active');
+        bar.classList.remove('hidden');
+        showToast('Selection mode ON — click a face card to select it', 'info');
+    } else {
+        btn.textContent = '⊕ Select';
+        btn.classList.remove('active');
+        bar.classList.add('hidden');
+        clearFaceSelection();
+    }
+
+    _applyGroupModeToForm();
+}
+
+/** Add/remove group-mode class on the parameters form and restore selected state. */
+function _applyGroupModeToForm() {
+    const form = DOM.parametersForm();
+    if (!form) return;
+    if (state.groupMode) {
+        form.classList.add('group-mode');
+    } else {
+        form.classList.remove('group-mode');
+    }
+    // Restore selected highlights for currently-selected faces
+    form.querySelectorAll('.ocp-card[data-face-id]').forEach(card => {
+        card.classList.toggle('face-selected', state.selectedFaces.has(card.dataset.faceId));
+    });
+}
+
+/** Called by onclick on every face card. In group-mode toggles selection. */
+function handleFaceCardClick(event, faceId) {
+    if (!state.groupMode) return;
+    // Don't intercept input/button clicks — user still needs to edit values
+    const tag = event.target.tagName.toLowerCase();
+    if (['input', 'button', 'select', 'textarea'].includes(tag)) return;
+    event.stopPropagation();
+    _toggleFaceSelection(faceId);
+}
+
+function _toggleFaceSelection(faceId) {
+    if (state.selectedFaces.has(faceId)) {
+        state.selectedFaces.delete(faceId);
+    } else {
+        state.selectedFaces.add(faceId);
+    }
+    // Sync 3D viewer highlight (green = selected, plain = deselected)
+    stepViewer.setGroupFaceSelected(faceId, state.selectedFaces.has(faceId));
+    _syncSelectionUI();
+}
+
+/** Re-paint selection count + card highlights. */
+function _syncSelectionUI() {
+    const count = DOM.groupSelCount();
+    if (count) count.textContent = state.selectedFaces.size;
+
+    const form = DOM.parametersForm();
+    if (form) {
+        form.querySelectorAll('.ocp-card[data-face-id]').forEach(card => {
+            card.classList.toggle('face-selected', state.selectedFaces.has(card.dataset.faceId));
+        });
+    }
+}
+
+/** Deselect all faces. */
+function clearFaceSelection() {
+    state.selectedFaces.clear();
+    stepViewer.clearAllGroupHighlights();
+    _syncSelectionUI();
 }
 
 /**
- * Display features from STEP analysis as read-only info in the parameters panel.
+ * Create (or merge into) a named group from the current selection.
+ * If a group with the same name already exists, the selected faces are
+ * added to it.
  */
-function displayFeatures(features) {
-    const form = DOM.parametersForm();
-    const regenBtn = DOM.regenerateBtn();
-    regenBtn.classList.add('hidden');
-
-    if (!features || Object.keys(features).length === 0) {
-        form.innerHTML = '<p class="params-placeholder">No features detected</p>';
+function createGroupFromSelection() {
+    const nameInput = DOM.groupNameInput();
+    const rawName = (nameInput ? nameInput.value.trim() : '');
+    if (!rawName) {
+        showToast('Please enter a group name first', 'warning');
+        if (nameInput) nameInput.focus();
+        return;
+    }
+    if (state.selectedFaces.size === 0) {
+        showToast('No faces selected — click face cards to select them', 'warning');
         return;
     }
 
-    let html = '';
+    const name = rawName.toLowerCase().replace(/\s+/g, '_');
 
-    // Bounding box
-    if (features.bounding_box) {
-        const bb = features.bounding_box;
-        html += '<div class="param-section-label">Bounding Box</div>';
-        [['x_mm', 'X'], ['y_mm', 'Y'], ['z_mm', 'Z']].forEach(([key, label]) => {
-            if (bb[key] != null) {
-                html += `<div class="param-row">
-                    <span class="param-name">${label} length</span>
-                    <span class="param-value-ro">${Number(bb[key]).toFixed(2)} mm</span>
-                </div>`;
-            }
+    if (state.faceGroups[name]) {
+        // Merge: add new faces to existing group
+        const existing = state.faceGroups[name].faces;
+        state.selectedFaces.forEach(fid => {
+            if (!existing.includes(fid)) existing.push(fid);
         });
+        showToast(`Added ${state.selectedFaces.size} face(s) to group "${name}"`, 'success');
+    } else {
+        // Create new group with next palette colour
+        const usedColors = Object.values(state.faceGroups).map(g => g.color);
+        const color = GROUP_COLORS.find(c => !usedColors.includes(c)) || GROUP_COLORS[Object.keys(state.faceGroups).length % GROUP_COLORS.length];
+        state.faceGroups[name] = {
+            faces: [...state.selectedFaces],
+            color,
+        };
+        showToast(`Group "${name}" created with ${state.selectedFaces.size} face(s)`, 'success');
     }
 
-    // Face count
-    if (features.face_count) {
-        html += `<div class="param-row">
-            <span class="param-name">Total faces</span>
-            <span class="param-value-ro">${features.face_count}</span>
-        </div>`;
+    if (nameInput) nameInput.value = '';
+    clearFaceSelection();
+    renderGroupsPanel();
+}
+
+/** Remove a face from a specific group. */
+function removeFaceFromGroup(groupName, faceId) {
+    const g = state.faceGroups[groupName];
+    if (!g) return;
+    g.faces = g.faces.filter(f => f !== faceId);
+    if (g.faces.length === 0) {
+        delete state.faceGroups[groupName];
+        showToast(`Group "${groupName}" deleted (empty)`, 'info');
+    }
+    renderGroupsPanel();
+}
+
+/** Delete an entire group. */
+function deleteGroup(groupName) {
+    delete state.faceGroups[groupName];
+    renderGroupsPanel();
+    showToast(`Group "${groupName}" deleted`, 'info');
+}
+
+/** Toggle collapsed/expanded state of a group's face list. */
+function toggleGroupExpand(groupName) {
+    const facesEl = document.getElementById(`gfaces-${groupName}`);
+    const btnEl   = document.getElementById(`gexpand-${groupName}`);
+    if (!facesEl) return;
+    facesEl.classList.toggle('hidden');
+    if (btnEl) btnEl.classList.toggle('rotated');
+}
+
+/** Re-render the groups list panel. */
+function renderGroupsPanel() {
+    const list     = DOM.groupsList();
+    const emptyMsg = DOM.groupsEmptyMsg();
+    if (!list) return;
+
+    const groups = Object.entries(state.faceGroups);
+
+    if (groups.length === 0) {
+        list.innerHTML = `<p class="groups-empty-msg" id="groups-empty-msg">
+            No groups yet — click <strong>⊕ Select</strong>, pick faces&nbsp;in the panel below, then save a group.
+        </p>`;
+        _refreshAllGroupDots();
+        return;
     }
 
-    // Summary text
-    if (features.summary) {
-        html += '<div class="param-section-label">Summary</div>';
-        html += `<p class="feature-summary">${features.summary}</p>`;
-    }
+    // Hide placeholder
+    list.innerHTML = groups.map(([name, g]) => {
+        const { faces, color } = g;
+        const faceChips = faces.map(fid => `
+            <span class="group-face-chip">
+                ${fid.toUpperCase()}
+                <button onclick="removeFaceFromGroup('${name}','${fid}')" title="Remove from group">×</button>
+            </span>
+        `).join('');
 
-    // Cylinders
-    if (features.cylinders && features.cylinders.length > 0) {
-        html += `<div class="param-section-label">Cylinders (${features.cylinders.length})</div>`;
-        // Show unique radii
-        const uniqueRadii = [...new Set(features.cylinders.map(c => c.radius_mm))].sort((a, b) => a - b);
-        uniqueRadii.forEach(r => {
-            const count = features.cylinders.filter(c => c.radius_mm === r).length;
-            html += `<div class="param-row">
-                <span class="param-name">r=${Number(r).toFixed(2)}mm</span>
-                <span class="param-value-ro">×${count} face${count > 1 ? 's' : ''}</span>
-            </div>`;
+        return `
+            <div class="group-card" style="--group-color:${color}; border-color:${color}33; background:${color}08;">
+                <div class="group-card-header" onclick="toggleGroupExpand('${name}')">
+                    <span class="group-color-dot"></span>
+                    <span class="group-card-name">${name}</span>
+                    <span class="group-face-badge" style="color:${color};border-color:${color}55;background:${color}18;">
+                        ${faces.length} face${faces.length !== 1 ? 's' : ''}
+                    </span>
+                    <button id="gexpand-${name}" class="group-expand-btn" title="Expand/collapse">▾</button>
+                    <button class="group-delete-btn" onclick="event.stopPropagation();deleteGroup('${name}')" title="Delete group">✕</button>
+                </div>
+                <div id="gfaces-${name}" class="group-faces hidden">
+                    ${faceChips}
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    _refreshAllGroupDots();
+}
+
+/**
+ * Refresh the colored dot indicators on each face card that show which
+ * group(s) the face belongs to.
+ */
+function _refreshAllGroupDots() {
+    // Build a map: faceId → [{color, groupName}]
+    const membership = {};
+    Object.entries(state.faceGroups).forEach(([name, g]) => {
+        g.faces.forEach(fid => {
+            if (!membership[fid]) membership[fid] = [];
+            membership[fid].push({ name, color: g.color });
         });
-    }
+    });
 
-    // Cones
-    if (features.cones && features.cones.length > 0) {
-        html += `<div class="param-section-label">Cones (${features.cones.length})</div>`;
-        features.cones.slice(0, 5).forEach((c, i) => {
-            html += `<div class="param-row">
-                <span class="param-name">${c.id} apex r</span>
-                <span class="param-value-ro">${Number(c.apex_radius_mm).toFixed(2)} mm</span>
-            </div>`;
-        });
-    }
+    // Update every dot container in the form
+    document.querySelectorAll('.face-group-dots[id^="gdots-"]').forEach(el => {
+        const faceId = el.id.replace('gdots-', '');
+        const groups = membership[faceId] || [];
+        el.innerHTML = groups.map(({ name, color }) =>
+            `<span class="face-group-dot" style="background:${color};box-shadow:0 0 4px ${color}" title="${name}"></span>`
+        ).join('');
+    });
+}
 
-    // Tori (fillets)
-    if (features.tori && features.tori.length > 0) {
-        html += `<div class="param-section-label">Fillets / Tori (${features.tori.length})</div>`;
-        const uniqueMinor = [...new Set(features.tori.map(t => t.minor_radius_mm))].sort((a, b) => a - b);
-        uniqueMinor.forEach(r => {
-            const count = features.tori.filter(t => t.minor_radius_mm === r).length;
-            html += `<div class="param-row">
-                <span class="param-name">fillet r=${Number(r).toFixed(2)}mm</span>
-                <span class="param-value-ro">×${count}</span>
-            </div>`;
-        });
-    }
+/**
+ * Builds a face-group context block to prepend to an edit prompt so the
+ * AI knows which face IDs "holes", "bosses" etc. refer to.
+ * Returns the original prompt unchanged if no groups exist.
+ */
+function _injectGroupContext(prompt) {
+    const groups = Object.entries(state.faceGroups);
+    if (groups.length === 0) return prompt;
 
-    // Planes
-    if (features.planes && features.planes.length > 0) {
-        html += `<div class="param-section-label">Planes (${features.planes.length})</div>`;
-    }
-
-    form.innerHTML = html || '<p class="params-placeholder">No extractable features</p>';
+    const lines = groups.map(([name, g]) =>
+        `  • ${name}: ${g.faces.join(', ')} (${g.faces.length} face${g.faces.length !== 1 ? 's' : ''})`
+    );
+    const ctx = `[Face Groups — use these names in your prompt]\n${lines.join('\n')}\n\n`;
+    return ctx + prompt;
 }
 
 // ========================================
@@ -452,37 +693,40 @@ const PREDEFINED_TEMPLATES = [
 ];
 
 async function loadTemplates() {
-    const list = DOM.templatesSelect();
-    list.innerHTML = '';
-
-    function renderList(templates) {
-        state.templates = templates;
-        templates.forEach(t => {
-            const item = document.createElement('div');
-            item.className = 'template-item';
-            item.textContent = t.name;
-            item.dataset.name = t.name;
-            item.addEventListener('click', () => {
-                list.querySelectorAll('.template-item').forEach(el => el.classList.remove('active'));
-                item.classList.add('active');
-                DOM.promptInput().value = t.prompt || `Create a ${t.name}`;
-            });
-            list.appendChild(item);
-        });
-    }
-
+    const select = DOM.templatesSelect();
     try {
         const templates = await api.getTemplates();
         if (templates && templates.length > 0) {
-            renderList(templates);
+            state.templates = templates;
+            templates.forEach(t => {
+                const option = document.createElement('option');
+                option.value = t.name;
+                option.textContent = t.name;
+                select.appendChild(option);
+            });
             return;
         }
     } catch (error) {
         console.log('Backend templates not available, using predefined');
     }
-    renderList(PREDEFINED_TEMPLATES);
+    state.templates = PREDEFINED_TEMPLATES;
+    PREDEFINED_TEMPLATES.forEach(t => {
+        const option = document.createElement('option');
+        option.value = t.name;
+        option.textContent = t.name;
+        select.appendChild(option);
+    });
 }
 
+function handleTemplateSelect(e) {
+    const templateName = e.target.value;
+    if (!templateName) return;
+    const template = state.templates.find(t => t.name === templateName);
+    if (template) {
+        DOM.promptInput().value = template.prompt || `Create a ${template.name}`;
+    }
+    e.target.value = '';
+}
 
 // ========================================
 // Generation
@@ -496,9 +740,6 @@ async function handleGenerate() {
     state.generating = true;
     setGenerating(true);
     showLoading('Generating CAD model...');
-
-    // Clear any upload state first
-    clearUploadState();
 
     try {
         const validation = await api.validatePrompt(prompt);
@@ -521,31 +762,14 @@ async function handleGenerate() {
             loadStepContent(state.currentModel.baseName),
             loadParameters()
         ]);
-
-        // Show all tabs for generated models
-        setVisibleTabs(['viewer3d', 'preview', 'json', 'python', 'step']);
+        // Feed features to the 3D viewer tooltip engine (loadParameters sets state.ocpFeatures)
+        if (state.ocpFeatures) stepViewer.setFaceFeatures(state.ocpFeatures);
 
         // Auto-load the generated STEP into the 3D viewer
         const stepUrl = `http://localhost:5000/outputs/step/${stepFile}`;
         switchTab('viewer3d');
         stepViewer.loadStepUrl(stepUrl);
-
-        // Generate preview images in background (non-blocking)
-        api.previewStepByName(stepFile).then(previewResult => {
-            if (previewResult && previewResult.image_urls) {
-                state.previewImageUrls = previewResult.image_urls;
-                state.previewFeatures = previewResult.features || null;
-                renderPreviewGallery(previewResult.image_urls);
-            }
-        }).catch(err => console.warn('Preview generation failed:', err));
-
-        // Show pencil icon (indicates prompt can be edited & regenerated)
-        state.lastGeneratedPrompt = prompt;
-        const editBtn = DOM.promptEditBtn();
-        if (editBtn) {
-            editBtn.classList.remove('hidden');
-            editBtn.classList.remove('modified');
-        }
+        addToHistoryFromUrl(stepFile, stepUrl);
 
         showToast('Model generated successfully', 'success');
     } catch (error) {
@@ -562,67 +786,161 @@ async function handleGenerate() {
 // Regeneration
 // ========================================
 async function handleRegenerate() {
-    if (!state.currentModel || state.parameters.length === 0) {
-        showError('No parameters to update');
+    if (!state.ocpFeatures) {
+        showError('No geometric features loaded');
+        showToast('Please load a model first to extract parameters', 'error');
         return;
     }
-    showLoading('Regenerating model...');
+
+    if (!state.currentModel && !state.previewFile) {
+        showError('No model loaded');
+        showToast('Please generate or upload a model first', 'error');
+        return;
+    }
+
+    showLoading('Mapping edits & regenerating model...');
+
     try {
-        const filename = extractFilename(state.currentModel.py_file);
-        const updates = {};
-        state.parameters.forEach((param, i) => {
-            const input = document.getElementById(`param-${i}`);
-            const value = parseFloat(input.value);
-            if (!isNaN(value) && value !== param.value) updates[param.name] = value;
+        // Derive the filename the backend will use to find the STEP file.
+        // For generated models use the STEP filename; for uploads use previewFile.name.
+        const filename = state.currentModel
+            ? extractFilename(state.currentModel.step_file || state.currentModel.py_file || '')
+            : state.previewFile.name;
+
+        // If this is an uploaded file, make sure it's on the backend before regenerating.
+        if (!state.currentModel && state.previewFile) {
+            updateLoading('Uploading file to backend...');
+            try {
+                await api.uploadStepFile(state.previewFile);
+            } catch (uploadErr) {
+                console.warn('Re-upload for regeneration failed:', uploadErr);
+                // Continue — the file may already exist from the earlier loadParameters upload.
+            }
+        }
+
+        updateLoading('Collecting parameter changes...');
+
+        // Collect updates from the UI
+        const updates = [];
+        let hasInvalidInputs = false;
+        const invalidMessages = [];
+        
+        document.querySelectorAll('.ocp-card').forEach(card => {
+            const faceId = card.dataset.faceId;
+            const type = card.dataset.type;
+            const update = { id: faceId, type: type };
+            let changed = false;
+
+            // Check for radius (cylinders) — only collect if value actually changed
+            const radInput = card.querySelector('[data-key="radius_mm"]');
+            if (radInput) {
+                const radValue = parseFloat(radInput.value);
+                const radOrig  = parseFloat(radInput.dataset.original ?? radInput.value);
+                if (isNaN(radValue) || radValue <= 0) {
+                    hasInvalidInputs = true;
+                    invalidMessages.push(`Invalid radius for ${faceId}: must be positive number`);
+                } else if (radValue !== radOrig) {
+                    update.radius_mm = radValue;
+                    changed = true;
+                }
+            }
+
+            // Check for dims (planes) — only collect if either dimension changed
+            const d0 = card.querySelector('[data-key="dim-0"]');
+            const d1 = card.querySelector('[data-key="dim-1"]');
+            if (d0 && d1) {
+                const dim0 = parseFloat(d0.value);
+                const dim1 = parseFloat(d1.value);
+                const origDim0 = parseFloat(d0.dataset.original ?? d0.value);
+                const origDim1 = parseFloat(d1.dataset.original ?? d1.value);
+                if (isNaN(dim0) || dim0 <= 0 || isNaN(dim1) || dim1 <= 0) {
+                    hasInvalidInputs = true;
+                    invalidMessages.push(`Invalid dimensions for ${faceId}: must be positive numbers`);
+                } else if (dim0 !== origDim0 || dim1 !== origDim1) {
+                    update.dims = [dim0, dim1];
+                    changed = true;
+                }
+            }
+
+            // Check for Location XYZ — only collect if any coordinate changed
+            const lx = card.querySelector('[data-key="loc-x"]');
+            const ly = card.querySelector('[data-key="loc-y"]');
+            const lz = card.querySelector('[data-key="loc-z"]');
+            if (lx && ly && lz) {
+                const locX = parseFloat(lx.value);
+                const locY = parseFloat(ly.value);
+                const locZ = parseFloat(lz.value);
+                const origX = parseFloat(lx.dataset.original ?? lx.value);
+                const origY = parseFloat(ly.dataset.original ?? ly.value);
+                const origZ = parseFloat(lz.dataset.original ?? lz.value);
+                if (isNaN(locX) || isNaN(locY) || isNaN(locZ)) {
+                    hasInvalidInputs = true;
+                    invalidMessages.push(`Invalid location for ${faceId}: must be valid numbers`);
+                } else if (locX !== origX || locY !== origY || locZ !== origZ) {
+                    update.location = [locX, locY, locZ];
+                    changed = true;
+                }
+            }
+
+            if (changed) updates.push(update);
         });
-        if (Object.keys(updates).length === 0) {
-            showToast('No parameters were changed', 'info');
+
+        if (hasInvalidInputs) {
+            hideLoading();
+            showError('Parameter validation failed');
+            showToast(invalidMessages.join('; '), 'error');
+            return;
+        }
+
+        if (updates.length === 0) {
+            showToast('No changes detected — edit a radius, dimension, or location value then try again.', 'warning');
             hideLoading();
             return;
         }
-        const result = await api.updateAndRegenerate(filename, updates);
-        if (result.success) {
-            // Update step file reference
-            const stepFile = result.step_file
-                ? result.step_file.split(/[\\/]/).pop()
-                : state.currentModel.baseName + '.step';
-            state.currentModel.step_file = result.step_file;
+
+        updateLoading('Mapping geometric edits via LLM...');
+        console.log('Sending updates:', updates);
+        
+        const result = await api.regenerateOcp(filename, state.ocpFeatures, updates);
+
+        if (result.status === 'success') {
+            // Update state — the regeneration always produces a generated-model result.
+            state.currentModel = {
+                ...result,
+                baseName: result.base_name || (result.step_file ? extractFilename(result.step_file).replace('.step', '') : 'result')
+            };
 
             if (result.glb_url) {
-                state.currentModel.glb_url = result.glb_url;
                 DOM.visualizeBtn().classList.remove('hidden');
             }
 
-            // Reload code tabs
+            // Reload other panels
+            updateLoading('Loading updated model files...');
             await Promise.all([
+                loadJsonContent(state.currentModel.baseName),
                 loadPythonContent(state.currentModel.baseName),
-                loadStepContent(state.currentModel.baseName)
+                loadStepContent(state.currentModel.baseName),
+                loadParameters() // Re-extract new geometry features
             ]);
 
-            // Reload the 3D viewer with updated STEP (cache-bust)
-            const stepUrl = `http://localhost:5000/outputs/step/${stepFile}?t=${Date.now()}`;
-            stepViewer.loadStepUrl(stepUrl);
+            // Load into viewer
+            if (result.step_file) {
+                const stepUrl = `http://localhost:5000/outputs/step/${extractFilename(result.step_file)}`;
+                switchTab('viewer3d');
+                stepViewer.loadStepUrl(stepUrl);
+                addToHistoryFromUrl(extractFilename(result.step_file), stepUrl);
+            }
 
-            // Re-extract parameters (values updated in .py) and refresh the form
-            await loadParameters();
-
-            // Regenerate preview in background
-            api.previewStepByName(stepFile).then(prev => {
-                if (prev && prev.image_urls) {
-                    state.previewImageUrls = prev.image_urls;
-                    state.previewFeatures = prev.features || null;
-                    renderPreviewGallery(prev.image_urls);
-                }
-            }).catch(() => {});
-
-            switchTab('viewer3d');
-            showToast('Model regenerated successfully', 'success');
+            showToast('Model regenerated from geometric edits!', 'success');
         } else {
-            throw new Error(result.message || 'Regeneration failed');
+            throw new Error(result.error?.message || result.message || 'Regeneration failed');
         }
+
     } catch (error) {
-        showError(error.message);
-        showToast(`Error: ${error.message}`, 'error');
+        console.error('Regeneration error:', error);
+        const errorMsg = error.message || 'Unknown error occurred';
+        showError(`Regeneration failed: ${errorMsg}`);
+        showToast(`Error: ${errorMsg}`, 'error');
     } finally {
         hideLoading();
     }
@@ -640,9 +958,21 @@ function handleVisualize() {
     const glbUrl = BASE + state.currentModel.glb_url;
     const mv = DOM.modelViewer();
 
+    if (!mv) {
+        // GLB model-viewer not available — fall back to loading the STEP in the Three.js viewer
+        const stepFile = extractFilename(state.currentModel.step_file || '');
+        if (stepFile) {
+            switchTab('viewer3d');
+            stepViewer.loadStepUrl(`${BASE}/outputs/step/${stepFile}`);
+        }
+        return;
+    }
+
     mv.setAttribute('src', glbUrl);
-    DOM.viewer3dPlaceholder().classList.add('hidden');
-    DOM.viewer3dContainer().classList.remove('hidden');
+    const ph   = DOM.viewer3dPlaceholder();
+    const cont = DOM.viewer3dContainer();
+    if (ph)   ph.classList.add('hidden');
+    if (cont) cont.classList.remove('hidden');
 
     // Switch to 3D Viewer tab
     switchTab('viewer3d');
@@ -652,62 +982,50 @@ function handleVisualize() {
 // ========================================
 // Upload & Preview
 // ========================================
-// Upload & Render 3D
-// ========================================
 
 function selectStepFile(file) {
     state.previewFile = file;
     DOM.dropZoneText().textContent = file.name;
     DOM.dropZone().classList.add('has-file');
-    DOM.render3dBtn().disabled = false;
-    DOM.uploadError().textContent = '';
+    DOM.previewBtn().disabled = false;
+    DOM.view3dBtn().disabled = false;
+    DOM.previewError().textContent = '';
+    // Auto-populate the Parameters panel as soon as a file is chosen
+    loadParameters().catch(() => {});
 }
 
-async function handleRender3D() {
+async function handlePreview() {
     if (!state.previewFile) {
-        DOM.uploadError().textContent = 'Please select a .step file first.';
+        DOM.previewError().textContent = 'Please select a .step file first.';
         return;
     }
 
-    DOM.uploadError().textContent = '';
-    showLoading('Rendering 3D model & generating previews…');
-
-    // Clear any generate state first
-    clearGenerateState();
+    DOM.previewError().textContent = '';
+    showLoading('Analyzing & rendering 7 views…');
 
     try {
-        // Step 1: Load into 3D viewer
-        await stepViewer.loadStepFile(state.previewFile);
-        
-        // Step 2: Generate preview images in background
         const formData = new FormData();
         formData.append('file', state.previewFile);
-        
+
         const result = await api.previewStep(formData);
-        
+
         state.previewImageUrls = result.image_urls || [];
         state.previewFeatures = result.features || null;
-        
-        // Render preview gallery
+
+        // Show edit area (we have features now)
+        DOM.editArea().classList.remove('hidden');
+
+        // Switch to Preview tab and render gallery
+        switchTab('preview');
         renderPreviewGallery(result.image_urls);
+        showToast('Preview ready — 7 views rendered', 'success');
 
-        // Load STEP content into the STEP tab (client-side read)
-        loadUploadedStepContent(state.previewFile);
-
-        // Display extracted features as read-only parameters
-        displayFeatures(result.features);
-        
-        // Imported file — only show 3D viewer, preview and STEP tabs
-        setVisibleTabs(['viewer3d', 'preview', 'step']);
-
-        // Switch to 3D Viewer tab
-        switchTab('viewer3d');
-        
-        showToast('3D model loaded', 'success');
+        // Record in preview panel history
+        addToHistoryEntry('preview', { name: state.previewFile.name, source: 'preview' });
 
     } catch (error) {
-        DOM.uploadError().textContent = `Render failed: ${error.message}`;
-        showToast(`Render error: ${error.message}`, 'error');
+        DOM.previewError().textContent = `Preview failed: ${error.message}`;
+        showToast(`Preview error: ${error.message}`, 'error');
     } finally {
         hideLoading();
     }
@@ -724,9 +1042,7 @@ function renderPreviewGallery(imageUrls) {
     DOM.previewViewer().classList.remove('hidden');
 
     // Reset pan and zoom whenever a new preview loads
-    if (typeof _resetTransform === 'function') {
-        _resetTransform();
-    }
+    _resetTransform();
 
     const BASE = 'http://localhost:5000';
     const strip = DOM.viewStrip();
@@ -866,6 +1182,79 @@ function zoomOut() { const c = _wrapCenter(); _zoomToward(-ZOOM_STEP * 2, c.x, c
 function zoomReset() { _resetTransform(); }
 
 // ========================================
+// Edit STEP
+// ========================================
+async function handleEditStep() {
+    if (!state.previewFile) {
+        DOM.editError().textContent = 'No STEP file loaded.';
+        return;
+    }
+    const prompt = DOM.editPromptInput().value.trim();
+    if (!prompt) {
+        DOM.editError().textContent = 'Please enter an edit prompt.';
+        return;
+    }
+
+    // Prepend any defined face-group context so the AI can resolve group names
+    const enrichedPrompt = _injectGroupContext(prompt);
+
+    DOM.editError().textContent = '';
+    showLoading('Editing STEP file…');
+
+    try {
+        const formData = new FormData();
+        formData.append('file', state.previewFile);
+        formData.append('prompt', enrichedPrompt);
+
+        const result = await api.editStep(formData);
+
+        // ── Lossless BREP path: result has step_file but no py_file / json_file ──
+        // Only load what actually exists; skip JSON/Python tabs for BREP edits.
+        if (result.step_url && result.step_file) {
+            const stepFilename = result.step_file.split(/[\\/]/).pop();
+            const baseName = stepFilename.replace('.step', '');
+
+            state.currentModel = {
+                ...result,
+                baseName,
+                step_file: result.step_file,
+            };
+
+            // Reload available output tabs
+            updateLoading('Loading edited model…');
+            const loaders = [loadStepContent(baseName), loadParameters()];
+            // Only attempt code tabs if the pipeline produced them (regeneration path)
+            if (result.py_file)   loaders.push(loadPythonContent(baseName));
+            if (result.json_file) loaders.push(loadJsonContent(baseName));
+            await Promise.all(loaders);
+            if (state.ocpFeatures) stepViewer.setFaceFeatures(state.ocpFeatures);
+
+            // auto-load into 3D viewer
+            const stepUrl = `http://localhost:5000/outputs/step/${stepFilename}`;
+            switchTab('viewer3d');
+            stepViewer.loadStepUrl(stepUrl);
+            addToHistoryFromUrl(stepFilename, stepUrl);
+
+            showToast('STEP edited — model updated', 'success');
+        } else {
+            showToast('Edit complete (no step_url returned)', 'warning');
+        }
+
+        // Record in step panel history
+        addToHistoryEntry('step', {
+            name: state.previewFile ? state.previewFile.name : 'edited.step',
+            source: 'edit',
+        });
+
+    } catch (error) {
+        DOM.editError().textContent = `Edit failed: ${error.message}`;
+        showToast(`Edit error: ${error.message}`, 'error');
+    } finally {
+        hideLoading();
+    }
+}
+
+// ========================================
 // Download
 // ========================================
 function downloadStepFile() {
@@ -916,3 +1305,181 @@ function showToast(message, type = 'info') {
 function extractFilename(path) {
     return path.split('\\').pop().split('/').pop();
 }
+
+// ========================================
+// History — Per-Panel, Backend-Persistent
+// ========================================
+
+let _currentHistoryPanel = null;   // which panel's sidebar is open
+
+/** Open (or close if same) the history sidebar for a given panel. */
+async function toggleHistorySidebar(panelId) {
+    const sidebar = document.getElementById('history-sidebar');
+    const overlay = document.getElementById('history-overlay');
+    const isOpen = sidebar.classList.contains('open');
+
+    // If clicking the same panel while already open → close
+    if (isOpen && _currentHistoryPanel === panelId) {
+        closeHistorySidebar();
+        return;
+    }
+
+    _currentHistoryPanel = panelId;
+
+    // Update title
+    const titles = {
+        'viewer3d': '3D Viewer History',
+        'preview': 'Preview History',
+        'json': 'JSON History',
+        'python': 'Python History',
+        'step': 'STEP History',
+        'parameters': 'Parameters History',
+    };
+    document.getElementById('history-sidebar-title').textContent =
+        titles[panelId] || 'Panel History';
+
+    // Highlight the active icon button (clear old)
+    document.querySelectorAll('.panel-history-btn').forEach(btn => btn.classList.remove('active'));
+    const activePanel = document.getElementById(`panel-${panelId}`);
+    if (activePanel) {
+        const btn = activePanel.querySelector('.panel-history-btn');
+        if (btn) btn.classList.add('active');
+    }
+
+    // Open drawer
+    sidebar.classList.add('open');
+    overlay.classList.add('open');
+
+    // Load history from backend
+    await _renderHistorySidebar(panelId);
+}
+
+/** Close the history sidebar drawer. */
+function closeHistorySidebar() {
+    const sidebar = document.getElementById('history-sidebar');
+    const overlay = document.getElementById('history-overlay');
+    sidebar.classList.remove('open');
+    overlay.classList.remove('open');
+
+    // Remove active state from icon buttons
+    document.querySelectorAll('.panel-history-btn').forEach(btn => btn.classList.remove('active'));
+    _currentHistoryPanel = null;
+}
+
+/** Fetch entries for panelId from backend and render them. */
+async function _renderHistorySidebar(panelId) {
+    const list = document.getElementById('history-sidebar-list');
+    list.innerHTML = '<p class="history-empty">Loading…</p>';
+
+    try {
+        const result = await api.getHistory(panelId);
+        const entries = result.entries || [];
+        _paintHistoryList(list, panelId, entries);
+    } catch (e) {
+        list.innerHTML = '<p class="history-empty">Could not load history.</p>';
+    }
+}
+
+/** Render history cards into a container element. */
+function _paintHistoryList(list, panelId, entries) {
+    if (!entries.length) {
+        list.innerHTML = '<p class="history-empty">No activity yet for this panel.</p>';
+        return;
+    }
+
+    list.innerHTML = entries.map((entry, idx) => {
+        const dt = new Date(entry.timestamp);
+        const time = dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const date = dt.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        const icon = entry.source === 'generated' ? '⚙' :
+            entry.source === 'preview' ? '🔍' :
+                entry.source === 'edit' ? '✏' : '📁';
+        const hasUrl = !!(entry.url);
+        return `
+            <div class="history-card" onclick="loadFromHistoryEntry('${panelId}', ${idx})" data-panel="${panelId}" data-idx="${idx}">
+                <div class="history-card-icon">${icon}</div>
+                <div class="history-card-info">
+                    <span class="history-card-name" title="${entry.name}">${entry.name}</span>
+                    <span class="history-card-time">${date} ${time}</span>
+                </div>
+                <div class="history-card-action">${hasUrl ? '▶' : '↑'}</div>
+            </div>
+        `;
+    }).join('');
+
+    // Store entries on element for replay
+    list._historyEntries = entries;
+}
+
+/** Replay a history entry. URL entries load into 3D viewer; upload-only entries prompt re-upload. */
+async function loadFromHistoryEntry(panelId, idx) {
+    const list = document.getElementById('history-sidebar-list');
+    const entries = list._historyEntries || [];
+    const entry = entries[idx];
+    if (!entry) return;
+
+    if (entry.url) {
+        // Generated model — load directly into 3D viewer
+        closeHistorySidebar();
+        switchTab('viewer3d');
+        await stepViewer.loadStepUrl(entry.url);
+    } else {
+        // Uploaded file — no server URL, guide user to re-upload
+        showToast(`"${entry.name}" was uploaded from disk. Please upload it again to reload.`, 'warning');
+    }
+}
+
+/**
+ * Add a history entry for a panel to the backend.
+ * @param {string} panelId
+ * @param {{name:string, source:string, url?:string}} entry
+ */
+async function addToHistoryEntry(panelId, entry) {
+    try {
+        await api.addHistoryEntry(panelId, entry);
+        // Refresh sidebar if it's currently open on this panel
+        if (_currentHistoryPanel === panelId) {
+            await _renderHistorySidebar(panelId);
+        }
+    } catch (e) {
+        console.warn('addToHistoryEntry failed:', e);
+    }
+}
+
+/** Called when user uploads a STEP and clicks View 3D.
+ *  Saves the file to the backend so it can be replayed from history. */
+async function addToHistory(file) {
+    try {
+        // Upload the file to the backend → get a stable serve URL
+        const result = await api.uploadStepFile(file);
+        await addToHistoryEntry('viewer3d', {
+            name: file.name,
+            source: 'upload',
+            url: result.url,   // e.g. /data/uploads/part.step
+        });
+    } catch (e) {
+        // Upload failed — still record the entry, just without a replay URL
+        console.warn('Could not upload STEP for history persistence:', e);
+        await addToHistoryEntry('viewer3d', { name: file.name, source: 'upload' });
+    }
+}
+
+/** Called after LLM generation — we have a stable URL. */
+function addToHistoryFromUrl(name, url) {
+    addToHistoryEntry('viewer3d', { name, source: 'generated', url });
+}
+
+/** Clear the panel whose sidebar is currently open. */
+async function clearCurrentPanelHistory() {
+    if (!_currentHistoryPanel) return;
+    try {
+        await api.clearPanelHistory(_currentHistoryPanel);
+        await _renderHistorySidebar(_currentHistoryPanel);
+    } catch (e) {
+        console.warn('clearCurrentPanelHistory failed:', e);
+    }
+}
+
+// Legacy shim — kept so old inline calls don't break
+function clearHistory() { clearCurrentPanelHistory(); }
+
