@@ -7,7 +7,7 @@ CHROMA_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__fil
 COLLECTION_NAME = "cad_templates"
 
 def get_chroma_client():
-    """Returns a persistent ChromaDB client."""
+    """Returns a persistent ChromaDB client.""" 
     os.makedirs(CHROMA_PATH, exist_ok=True)
     return chromadb.PersistentClient(path=CHROMA_PATH)
 
@@ -21,5 +21,5 @@ def get_collection():
     
     return client.get_or_create_collection(
         name=COLLECTION_NAME,
-        embedding_function=ef
+        embedding_function=ef  # type: ignore[arg-type]  # chromadb stub: SentenceTransformerEF[Documents] vs EF[Embeddable]
     )

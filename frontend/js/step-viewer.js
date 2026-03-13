@@ -12,6 +12,7 @@ const stepViewer = (() => {
     let controls = null;
     let animFrameId = null;
     let currentMeshes = [];
+    let currentGroup = null;    // the THREE.Group holding all meshes for the active model
     let isWireframe = false;
     let occtReady = false;
     let occtInstance = null;
@@ -207,9 +208,14 @@ const stepViewer = (() => {
                 if (Array.isArray(m.material)) m.material.forEach(mt => mt.dispose());
                 else m.material.dispose();
             }
-            if (scene) scene.remove(m);
         });
         currentMeshes = [];
+        // Remove the parent group from the scene (individual meshes are group children,
+        // not direct scene children — scene.remove(mesh) would be a no-op)
+        if (currentGroup && scene) {
+            scene.remove(currentGroup);
+        }
+        currentGroup = null;
         isWireframe = false;
         const btn = document.getElementById('step3d-btn-wire');
         if (btn) btn.classList.remove('active');
@@ -393,6 +399,7 @@ const stepViewer = (() => {
         }
 
         scene.add(meshGroup);
+        currentGroup = meshGroup;   // keep reference so _clearMeshes can remove it
         _setStatus('');   // hide status overlay
 
         // Fit camera so the model fills the view nicely
@@ -467,6 +474,7 @@ const stepViewer = (() => {
         if (hits.length === 0) {
             _deselectFace();
             _hideFaceTooltip();
+            _emitFaceEvent(null);
             return;
         }
 
@@ -476,6 +484,7 @@ const stepViewer = (() => {
         if (mesh === selectedMesh) {
             _deselectFace();
             _hideFaceTooltip();
+            _emitFaceEvent(null);
             return;
         }
 
@@ -486,6 +495,34 @@ const stepViewer = (() => {
         mesh.material = _selMat;
 
         _showFaceTooltip(event.clientX, event.clientY, mesh);
+        _emitFaceEvent(mesh);
+    }
+
+    /** Dispatch a custom event with face dimensions so the param panel can highlight matches. */
+    function _emitFaceEvent(mesh) {
+        if (!mesh) {
+            document.dispatchEvent(new CustomEvent('face-selected', { detail: null }));
+            return;
+        }
+        try {
+            mesh.geometry.computeBoundingBox();
+            const bb = mesh.geometry.boundingBox;
+            const sz = new THREE.Vector3();
+            const cen = new THREE.Vector3();
+            bb.getSize(sz);
+            bb.getCenter(cen);
+            // Collect all significant dimensions (> 0.01 mm)
+            const dims = [sz.x, sz.y, sz.z].filter(d => d > 0.01).sort((a, b) => b - a);
+            document.dispatchEvent(new CustomEvent('face-selected', {
+                detail: {
+                    featureId: mesh.userData.featureId || '',
+                    dims,
+                    center: { x: cen.x, y: cen.y, z: cen.z },
+                }
+            }));
+        } catch (_) {
+            document.dispatchEvent(new CustomEvent('face-selected', { detail: null }));
+        }
     }
 
     function _deselectFace() {

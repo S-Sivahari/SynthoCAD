@@ -8,7 +8,7 @@ sys.path.append(str(Path(__file__).parent.parent))
 # Absolute path to the frontend directory (two levels up from backend/api/)
 FRONTEND_DIR = Path(__file__).parent.parent.parent / 'frontend'
 
-from api.routes import generation_routes, parameter_routes, template_routes, viewer_routes, cleanup_routes, edit_routes
+from api.routes import generation_routes, parameter_routes, template_routes, cleanup_routes, edit_routes
 from utils.logger import api_logger
 from utils.errors import SynthoCadError
 from core import config
@@ -22,7 +22,6 @@ def create_app():
     app.register_blueprint(generation_routes.bp, url_prefix='/api/v1/generate')
     app.register_blueprint(parameter_routes.bp, url_prefix='/api/v1/parameters')
     app.register_blueprint(template_routes.bp, url_prefix='/api/v1/templates')
-    app.register_blueprint(viewer_routes.bp, url_prefix='/api/v1/viewer')
     app.register_blueprint(cleanup_routes.bp, url_prefix='/api/v1/cleanup')
     app.register_blueprint(edit_routes.bp, url_prefix='/api/v1/edit')
     

@@ -105,9 +105,11 @@ document.addEventListener('DOMContentLoaded', initApp);
 
 async function initApp() {
     setupEventListeners();
-    await loadTemplates();
+    // Templates are matched automatically on the backend; sidebar list is hidden.
     // Initialise the Three.js viewer (non-blocking — WASM loads in background)
     stepViewer.init();
+    // Listen for face picks from the 3D viewer → highlight matching parameters
+    document.addEventListener('face-selected', onFaceSelected);
 }
 
 function setupEventListeners() {
@@ -181,6 +183,39 @@ function setupEventListeners() {
 
     // Render 3D button
     DOM.render3dBtn().addEventListener('click', handleRender3D);
+
+    // ── Copy / Download toolbar buttons ────────────────────────────────────
+    const copyJsonBtn = document.getElementById('copy-json-btn');
+    if (copyJsonBtn) copyJsonBtn.addEventListener('click', () => copyViewerContent('json-viewer', 'JSON'));
+
+    const downloadJsonBtn = document.getElementById('download-json-btn');
+    if (downloadJsonBtn) downloadJsonBtn.addEventListener('click', downloadJSON);
+
+    const copyPyBtn = document.getElementById('copy-py-btn');
+    if (copyPyBtn) copyPyBtn.addEventListener('click', () => copyViewerContent('python-viewer', 'Python'));
+
+    const downloadPyBtn = document.getElementById('download-py-btn');
+    if (downloadPyBtn) downloadPyBtn.addEventListener('click', downloadPython);
+
+    const copyStepBtn = document.getElementById('copy-step-btn');
+    if (copyStepBtn) copyStepBtn.addEventListener('click', () => copyViewerContent('step-code-viewer', 'STEP'));
+
+    // ── Header & tab export shortcuts ──────────────────────────────────────
+    const headerExportStep = document.getElementById('header-export-step');
+    if (headerExportStep) headerExportStep.addEventListener('click', downloadStepFile);
+
+    const headerExportJson = document.getElementById('header-export-json');
+    if (headerExportJson) headerExportJson.addEventListener('click', downloadJSON);
+
+    const headerExportPy = document.getElementById('header-export-py');
+    if (headerExportPy) headerExportPy.addEventListener('click', downloadPython);
+
+    const tabExportStep = document.getElementById('tab-export-step');
+    if (tabExportStep) tabExportStep.addEventListener('click', downloadStepFile);
+
+    // ── Reset parameters ───────────────────────────────────────────────────
+    const resetParamsBtn = document.getElementById('reset-params-btn');
+    if (resetParamsBtn) resetParamsBtn.addEventListener('click', resetParameters);
 }
 
 // ========================================
@@ -294,6 +329,8 @@ async function loadParameters() {
         }
         state.parameters = result.parameters;
         regenBtn.classList.remove('hidden');
+        const resetBtn = document.getElementById('reset-params-btn');
+        if (resetBtn) resetBtn.classList.remove('hidden');
         form.innerHTML = result.parameters.map((param, i) => `
             <div class="param-row">
                 <span class="param-name" title="${param.name}">${param.description || param.name}</span>
@@ -524,6 +561,9 @@ async function handleGenerate() {
 
         // Show all tabs for generated models
         setVisibleTabs(['viewer3d', 'preview', 'json', 'python', 'step']);
+
+        // Show header & tab export buttons
+        showExportButtons(true);
 
         // Auto-load the generated STEP into the 3D viewer
         const stepUrl = `http://localhost:5000/outputs/step/${stepFile}`;
@@ -866,19 +906,150 @@ function zoomOut() { const c = _wrapCenter(); _zoomToward(-ZOOM_STEP * 2, c.x, c
 function zoomReset() { _resetTransform(); }
 
 // ========================================
-// Download
+// Download & Export
 // ========================================
 function downloadStepFile() {
     if (!state.currentModel) return;
     const stepPath = state.currentModel.step_file;
     const filename = extractFilename(stepPath);
     const url = `http://localhost:5000/outputs/step/${filename}`;
+    triggerDownload(url, filename);
+    showToast('Downloading STEP file…', 'info');
+}
+
+function downloadJSON() {
+    if (!state.currentModel) { showToast('No model generated yet', 'error'); return; }
+    const filename = `${state.currentModel.baseName}.json`;
+    const url = `http://localhost:5000/outputs/json/${filename}`;
+    triggerDownload(url, filename);
+    showToast('Downloading JSON…', 'info');
+}
+
+function downloadPython() {
+    if (!state.currentModel) { showToast('No model generated yet', 'error'); return; }
+    const filename = `${state.currentModel.baseName}_generated.py`;
+    const url = `http://localhost:5000/outputs/py/${filename}`;
+    triggerDownload(url, filename);
+    showToast('Downloading Python script…', 'info');
+}
+
+function triggerDownload(url, filename) {
     const a = document.createElement('a');
     a.href = url;
     a.download = filename;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
+}
+
+/** Copy the text content of a <pre> or element by ID to clipboard */
+async function copyViewerContent(elementId, label) {
+    const el = document.getElementById(elementId);
+    if (!el || !el.textContent.trim()) {
+        showToast(`No ${label} content to copy`, 'error');
+        return;
+    }
+    try {
+        await navigator.clipboard.writeText(el.textContent);
+        showToast(`${label} copied to clipboard`, 'success');
+    } catch (err) {
+        // Fallback
+        const ta = document.createElement('textarea');
+        ta.value = el.textContent;
+        ta.style.position = 'fixed';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+        showToast(`${label} copied`, 'success');
+    }
+}
+
+/** Reset editable parameter inputs back to their last-extracted values */
+function resetParameters() {
+    if (!state.parameters || state.parameters.length === 0) return;
+    state.parameters.forEach((param, i) => {
+        const input = document.getElementById(`param-${i}`);
+        if (input) input.value = param.value;
+    });
+    showToast('Parameters reset to original values', 'info');
+}
+
+// ========================================
+// Face → Parameter Highlighting
+// ========================================
+
+/**
+ * Called when a face is clicked (or deselected) in the 3D viewer.
+ * Matches the face bounding-box dimensions against parameter values
+ * and highlights the closest-matching param rows.
+ */
+function onFaceSelected(event) {
+    // Clear all existing highlights first
+    document.querySelectorAll('.param-row.highlighted').forEach(el => {
+        el.classList.remove('highlighted');
+    });
+
+    const detail = event.detail;
+    if (!detail || !detail.dims || !state.parameters || state.parameters.length === 0) return;
+
+    const TOLERANCE = 0.15;   // 15 % relative tolerance for dimension matching
+    const ABS_TOL   = 0.05;   // absolute tolerance for very small values (mm)
+
+    const faceDims = detail.dims;   // sorted descending, > 0.01 mm
+
+    // For each parameter, check if its absolute value is close to any face dimension
+    state.parameters.forEach((param, i) => {
+        const pVal = Math.abs(param.value);
+        if (pVal < 0.001) return; // skip near-zero params
+
+        for (const dim of faceDims) {
+            const diff = Math.abs(pVal - dim);
+            // Also check diameter = 2*radius match
+            const diffDia = Math.abs(pVal * 2 - dim);
+            const threshold = Math.max(ABS_TOL, pVal * TOLERANCE);
+
+            if (diff < threshold || diffDia < threshold) {
+                const row = document.getElementById(`param-${i}`)?.closest('.param-row');
+                if (row) {
+                    row.classList.add('highlighted');
+                    // Scroll the first highlighted row into view
+                    if (!document.querySelector('.param-row.highlighted ~ .param-row.highlighted')) {
+                        row.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+                    }
+                }
+                break; // one match per parameter is enough
+            }
+        }
+    });
+}
+
+/** Take a screenshot of the 3D viewer canvas */
+function takeScreenshot() {
+    const canvas = document.getElementById('step3d-canvas');
+    if (!canvas) { showToast('3D viewer not active', 'error'); return; }
+    try {
+        const dataUrl = canvas.toDataURL('image/png');
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = (state.currentModel ? state.currentModel.baseName : 'screenshot') + '_3d.png';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        showToast('Screenshot saved', 'success');
+    } catch (err) {
+        showToast('Screenshot failed (cross-origin canvas)', 'error');
+    }
+}
+
+/** Show or hide header/tab-level export action buttons */
+function showExportButtons(show) {
+    const ids = ['header-export-step', 'header-export-json', 'header-export-py', 'tab-export-step'];
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = show ? '' : 'none';
+    });
 }
 
 // ========================================
@@ -890,7 +1061,12 @@ function clearError() { DOM.errorMessage().textContent = ''; }
 function setGenerating(isGenerating) {
     const btn = DOM.generateBtn();
     btn.disabled = isGenerating;
-    btn.textContent = isGenerating ? 'Generating...' : 'Generate';
+    if (isGenerating) {
+        btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="15" height="15">
+            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg> Generating…`;
+    } else {
+        btn.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" width="15" height="15"><polygon points="5 3 19 12 5 21 5 3"/></svg> Generate`;
+    }
 }
 
 function showLoading(message) {

@@ -85,6 +85,10 @@ class ChromaRAGProvider:
                 score=1.0 - (i * 0.1),          # approximate ranking
                 json_path=item.get("json_path"),
                 source_id=item.get("id"),
+                metadata={
+                    "cadquery":   item.get("cadquery", ""),
+                    "image_path": item.get("image_path", ""),
+                },
             ))
         return results
 

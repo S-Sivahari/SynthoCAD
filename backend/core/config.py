@@ -4,7 +4,6 @@ BASE_DIR = Path(__file__).parent.parent.parent
 BACKEND_DIR = BASE_DIR / "backend"
 OUTPUT_DIR = BASE_DIR / "outputs"
 TEMPLATES_DIR = BASE_DIR / "templates"
-FREECAD_DIR = BASE_DIR / "freecad"
 
 PY_OUTPUT_DIR = OUTPUT_DIR / "py"
 STEP_OUTPUT_DIR = OUTPUT_DIR / "step"
@@ -81,9 +80,7 @@ CLEANUP_MAX_FILES_PER_TYPE = 100  # Keep max 100 files of each type
 CLEANUP_AUTO_RUN = False  # Auto cleanup on startup (set True for production)
 
 # LLM Configuration
-LLM_PROVIDER = "gemini"  # Options: "gemini", "ollama"
-OLLAMA_LLM_MODEL = "qwen2.5:7b"  # Recommended for CPU: qwen2.5:7b, llama3.1:8b
-OLLAMA_URL = "http://localhost:11434/api/generate"
+LLM_PROVIDER = "gemini"
 
 # Retry/Error Recovery Configuration
 RETRY_ENABLED = True

@@ -12,10 +12,11 @@ build/
 venv/
 ENV/
 
+batches/
 data_set/
 
-data_set_images/
 gencad_images/
+templates/
 templates/minimal_json
 outputs/py/*.py
 outputs/step/*.step
@@ -25,11 +26,7 @@ outputs/logs/*.log
 node_modules/
 frontend/build/
 frontend/dist/
-
-backend/chroma_db
-backend/scripts/batches
-backend/scripts/local_descriptions
-backend/scripts/dataset_extractor
+backend/rag/batches
 templates/txt
 batches.zip
 
@@ -50,3 +47,6 @@ Thumbs.db
 .idea/
 *.sublime-project
 *.sublime-workspace
+
+/train-00000-of-00002.parquet
+/train-00001-of-00002.parquet

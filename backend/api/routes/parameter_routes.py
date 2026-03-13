@@ -6,8 +6,6 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 from services.parameter_extractor import ParameterExtractor
-from services.ai_parameter_extractor import AIParameterExtractor
-from services.intelligent_parameter_extractor import IntelligentParameterExtractor
 from services.parameter_updater import ParameterUpdater
 from core.main import SynthoCadPipeline
 from utils.logger import api_logger
@@ -16,8 +14,6 @@ from core import config
 
 bp = Blueprint('parameters', __name__)
 extractor = ParameterExtractor()  # AST-based (default, most reliable)
-ai_extractor = AIParameterExtractor()  # AI-powered (LLM fallback)
-intelligent_extractor = IntelligentParameterExtractor()  # Rule-based JSON parser
 updater = ParameterUpdater()
 pipeline = SynthoCadPipeline(rag_provider=config.get_rag_provider())
 
@@ -39,30 +35,20 @@ def extract_parameters(filename):
     
     try:
         # Choose extraction method
-        if method == 'ai':
-            if not json_file.exists():
-                return jsonify({'error': True, 'message': f'JSON file not found: {base_name}.json'}), 404
-            params_data = ai_extractor.extract_with_fallback(
-                str(json_file), 
-                str(py_file) if py_file.exists() else None
-            )
-            markdown = ai_extractor.generate_markdown(params_data)
-        
-        elif method == 'intelligent':
-            if not json_file.exists():
-                return jsonify({'error': True, 'message': f'JSON file not found: {base_name}.json'}), 404
-            params_data = intelligent_extractor.extract_from_json(str(json_file))
-            markdown = "# Parameters\n\n" + json.dumps(params_data['parameters'], indent=2)
-        
-        else:
-            # AST-based extraction (default — fast, reliable, no LLM needed)
-            if not py_file.exists():
-                return jsonify({
-                    'error': True,
-                    'message': f'Python file not found: {filename}'
-                }), 404
-            params_data = extractor.extract_from_python(str(py_file))
-            markdown = extractor.generate_markdown(params_data)
+        if method in ('ai', 'intelligent'):
+            return jsonify({
+                'error': True,
+                'message': f"Extraction method '{method}' is no longer available. Use 'legacy' (AST-based)."
+            }), 400
+
+        # AST-based extraction (default — fast, reliable, no LLM needed)
+        if not py_file.exists():
+            return jsonify({
+                'error': True,
+                'message': f'Python file not found: {filename}'
+            }), 404
+        params_data = extractor.extract_from_python(str(py_file))
+        markdown = extractor.generate_markdown(params_data)
         
         api_logger.info(
             f"Extracted {params_data.get('total_count', 0)} parameters from {base_name} "
@@ -178,9 +164,8 @@ def regenerate_step(filename):
         # Regenerate STEP file
         api_logger.info(f"Regenerating {output_name} with updated parameters")
         step_file = pipeline.regenerate_from_updated_python(
-            str(py_file), 
-            output_name,
-            open_freecad=False
+            str(py_file),
+            output_name
         )
         
         api_logger.info(f"Successfully regenerated: {step_file}")

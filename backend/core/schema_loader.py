@@ -222,9 +222,13 @@ def build_edit_prompt() -> str:
         "2. The JSON MUST have a \"parts\" key with at least \"part_1\".\n"
         "3. \"part_1\" MUST use \"NewBodyFeatureOperation\".\n"
         "4. Each part needs EXACTLY ONE of: sketch+extrusion, revolve_profile+revolve, or hole_feature.\n"
-        "5. Sketch coordinates are normalized (0.0-1.0), then sketch_scale converts to real mm.\n"
-        "6. Always include \"units\": \"mm\".\n"
-        "7. Output ONLY raw JSON starting with { and ending with }.\n"
+        "5. Sketch coordinates are normalized (0.0-1.0). Set sketch_scale to the "
+        "largest profile dimension in mm so that coord * sketch_scale = real mm.\n"
+        "   Example: a 50mm-wide box → sketch_scale = 50, x coords in [0, 1].\n"
+        "6. The GEOMETRIC FEATURE REPORT below shows REAL mm dimensions. "
+        "Use them to set sketch_scale and compute normalized coords.\n"
+        "7. Always include \"units\": \"mm\".\n"
+        "8. Output ONLY raw JSON starting with { and ending with }.\n"
     )
     sections = [
         preamble,

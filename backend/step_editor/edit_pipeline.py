@@ -3,7 +3,7 @@
 Flow:
     STEP file
         → step_analyzer  (exact geometry: cylinders, planes, bbox)
-        → call_gemini / call_ollama  (new SCL JSON synthesis)
+        → call_gemini  (new SCL JSON synthesis)
         → SynthoCadPipeline.process_from_json  (generate new STEP)
 """
 import os
@@ -19,7 +19,6 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 from step_editor import step_analyzer
 from services.gemini_service import call_gemini
-from services.ollama_service import call_ollama
 from core.main import SynthoCadPipeline
 from core import config
 from core.schema_loader import build_edit_prompt
@@ -43,11 +42,31 @@ def _build_edit_prompt(features: Dict, user_prompt: str) -> str:
             )
 
     if features.get("planes"):
-        z_faces = [p for p in features["planes"] if abs(p["normal"][2]) > 0.9]
+        all_planes = features["planes"]
+        # Group: horizontal (Z-normal), vertical (X or Y normal), other
+        z_faces = [p for p in all_planes if abs(p["normal"][2]) > 0.9]
+        x_faces = [p for p in all_planes if abs(p["normal"][0]) > 0.9]
+        y_faces = [p for p in all_planes if abs(p["normal"][1]) > 0.9]
+        other   = [p for p in all_planes
+                    if abs(p["normal"][0]) <= 0.9 and abs(p["normal"][1]) <= 0.9
+                    and abs(p["normal"][2]) <= 0.9]
+
         if z_faces:
-            parts.append(f"\nMain Flat Faces (normal ≈ Z-axis):")
+            parts.append(f"\nHorizontal Faces ({len(z_faces)}, normal ≈ Z):")
             for p in z_faces:
-                parts.append(f"  - ID {p['id']}: dims={p['dims']}mm at z={p['location'][2]}mm")
+                parts.append(f"  - ID {p['id']}: dims={p['dims']}mm at z={p['location'][2]:.3f}mm")
+        if x_faces:
+            parts.append(f"\nVertical Faces ({len(x_faces)}, normal ≈ X):")
+            for p in x_faces:
+                parts.append(f"  - ID {p['id']}: dims={p['dims']}mm at x={p['location'][0]:.3f}mm")
+        if y_faces:
+            parts.append(f"\nVertical Faces ({len(y_faces)}, normal ≈ Y):")
+            for p in y_faces:
+                parts.append(f"  - ID {p['id']}: dims={p['dims']}mm at y={p['location'][1]:.3f}mm")
+        if other:
+            parts.append(f"\nAngled Faces ({len(other)}):")
+            for p in other:
+                parts.append(f"  - ID {p['id']}: normal={p['normal']}, dims={p['dims']}mm")
 
     if features.get("cones"):
         parts.append(f"\nConical Features ({len(features['cones'])} total - likely countersinks):")
@@ -62,14 +81,13 @@ def _build_edit_prompt(features: Dict, user_prompt: str) -> str:
 
 # ─── Main Entry Point ──────────────────────────────────────────────────────────
 
-def edit_step(step_path: str, user_prompt: str, open_freecad: bool = False) -> Dict[str, Any]:
+def edit_step(step_path: str, user_prompt: str) -> Dict[str, Any]:
     """
     Run the full STEP editing pipeline.
 
     Args:
         step_path:    Path to the uploaded STEP file.
         user_prompt:  Natural language description of the desired change.
-        open_freecad: Whether to open the result in FreeCAD.
 
     Returns:
         Result dict from SynthoCadPipeline (status, step_file, py_file, etc.)
@@ -89,12 +107,9 @@ def edit_step(step_path: str, user_prompt: str, open_freecad: bool = False) -> D
     full_prompt = _build_edit_prompt(features, user_prompt)
 
     try:
-        if config.LLM_PROVIDER == "ollama":
-            raw_response = call_ollama(full_prompt, max_tokens=4096, temperature=0.1)
-        else:
-            raw_response = call_gemini(full_prompt, max_tokens=8192, temperature=0.15)
+        raw_response = call_gemini(full_prompt, max_tokens=8192, temperature=0.15)
     except Exception as e:
-        return {"status": "error", "error": {"code": "LLM_FAILED", "message": f"{config.LLM_PROVIDER} failed: {str(e)}"}}
+        return {"status": "error", "error": {"code": "LLM_FAILED", "message": f"Gemini failed: {str(e)}"}}
 
     # 3. Parse JSON from LLM response
     import re
@@ -118,7 +133,7 @@ def edit_step(step_path: str, user_prompt: str, open_freecad: bool = False) -> D
     logger.info("[EditPipeline] Step 3: Generating new STEP file...")
     from core import config as _cfg
     pipeline = SynthoCadPipeline(rag_provider=_cfg.get_rag_provider())
-    result = pipeline.process_from_json(scl_json, open_freecad=open_freecad)
+    result = pipeline.process_from_json(scl_json)
 
     # 5. Attach analysis features to result
     result["features"] = features

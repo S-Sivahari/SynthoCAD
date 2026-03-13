@@ -12,3 +12,4 @@ sentence-transformers>=2.2.2
 tqdm>=4.66.0
 huggingface-hub>=0.20.0
 Pillow>=10.0.0
+pyarrow>=14.0.0

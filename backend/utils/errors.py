@@ -14,7 +14,6 @@ class ErrorCode(Enum):
     FILE_NOT_FOUND = "FILE_001"
     INVALID_INPUT = "INPUT_001"
     TEMPLATE_NOT_FOUND = "TEMPLATE_001"
-    FREECAD_CONNECTION_FAILED = "FREECAD_001"
 
 
 class SynthoCadError(Exception):

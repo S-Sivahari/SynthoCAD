@@ -14,7 +14,6 @@ from validators.json_validator import validate_json, validate_json_detailed, rep
 from core.cadquery_generator import CadQueryGenerator
 from services.parameter_extractor import ParameterExtractor
 from services.parameter_updater import ParameterUpdater
-from services.freecad_instance_generator import FreeCADInstanceGenerator
 from services.gemini_service import call_gemini
 from services.error_recovery_service import ErrorRecoveryService, RetryConfig, RetryableError
 from services.template_index import TemplateIndex
@@ -32,7 +31,6 @@ class SynthoCadPipeline:
         self.generator = CadQueryGenerator
         self.param_extractor = ParameterExtractor()
         self.param_updater = ParameterUpdater()
-        self.freecad = FreeCADInstanceGenerator()
         self.logger = pipeline_logger
         self.template_index = TemplateIndex(config.TEMPLATES_DIR)
         self.rag_provider = rag_provider or NullRAGProvider()
@@ -294,18 +292,6 @@ class SynthoCadPipeline:
                 "total_count": 0,
             }
 
-    def open_in_freecad(self, step_file: str) -> bool:
-        self.logger.info("Step 7: Opening STEP file in FreeCAD")
-
-        try:
-            self.freecad.open_step_file(step_file, async_mode=True)
-            self.logger.info("FreeCAD opened successfully")
-            return True
-
-        except Exception as e:
-            self.logger.warning(f"FreeCAD open failed: {str(e)}")
-            return False
-
     def update_parameters(self, py_file: str, parameters: Dict[str, float]) -> str:
         self.logger.info(f"Step 8: Updating {len(parameters)} parameters")
 
@@ -323,30 +309,35 @@ class SynthoCadPipeline:
             self.logger.error(f"Parameter update failed: {str(e)}")
             raise ParameterUpdateError(f"Failed to update parameters: {str(e)}")
 
-    def regenerate_from_updated_python(self, py_file: str, output_name: str, open_freecad: bool = True) -> str:
+    def regenerate_from_updated_python(self, py_file: str, output_name: str) -> str:
+        """Re-execute an already-updated CadQuery .py to regenerate the STEP.
+
+        The ParameterUpdater has already spliced new values into the .py
+        file.  We just need to ensure the export line uses the right name
+        and re-run it.
+        """
         self.logger.info("Step 9: Regenerating STEP from updated Python")
 
         py_path = Path(py_file)
         if not py_path.is_absolute():
             py_path = config.BASE_DIR / py_path
 
-        content = py_path.read_text()
+        content = py_path.read_text(encoding="utf-8")
+
+        # Fix the export filename so the .step lands in the right place
         import re as re_mod
         content = re_mod.sub(
-            r"cq\.exporters\.export\(result,\s*['\"][\w.-]+\.step['\"]\)",
-            f"cq.exporters.export(result, '{output_name}.step')",
+            r"cq\.exporters\.export\(\s*([\w]+)\s*,\s*['\"][\w.-]+\.step['\"]\s*\)",
+            rf"cq.exporters.export(\1, '{output_name}.step')",
             content,
         )
-        py_path.write_text(content)
+        py_path.write_text(content, encoding="utf-8")
 
         step_file = self.execute_cadquery_code(str(py_path), output_name)
 
-        if open_freecad:
-            self.freecad.reload_step_file(step_file)
-
         return step_file
 
-    def process_from_json(self, json_data: Dict, output_name: Optional[str] = None, open_freecad: bool = True) -> Dict[str, Any]:
+    def process_from_json(self, json_data: Dict, output_name: Optional[str] = None) -> Dict[str, Any]:
 
         try:
             json_data, repairs = repair_json(json_data)
@@ -373,18 +364,12 @@ class SynthoCadPipeline:
 
             params_result = self.extract_parameters(py_file)
 
-            if open_freecad:
-                freecad_opened = self.open_in_freecad(step_file)
-            else:
-                freecad_opened = False
-
             return {
                 "status": "success",
                 "json_file": str(json_file),
                 "py_file": py_file,
                 "step_file": step_file,
                 "parameters": params_result,
-                "freecad_opened": freecad_opened,
             }
 
         except SynthoCadError as e:
@@ -394,14 +379,27 @@ class SynthoCadPipeline:
             self.logger.error(f"Unexpected error: {str(e)}")
             return {"status": "error", "error": {"code": "UNKNOWN_ERROR", "message": str(e)}}
 
-    def process_from_prompt(self, prompt: str, open_freecad: bool = True) -> Dict[str, Any]:
+    def process_from_prompt(self, prompt: str) -> Dict[str, Any]:
 
         try:
             self.validate_prompt(prompt)
 
+            # ── Fast path: direct template match (no LLM call) ────────────────
+            matched_template = self.template_index.find_best_match(prompt)
+            if matched_template:
+                self.logger.info(
+                    f"Using exact template match: {matched_template.get('final_name')} "
+                    f"— skipping LLM generation"
+                )
+                result = self.process_from_json(matched_template)
+                if result.get("status") == "success":
+                    result["template_used"] = matched_template.get("final_name", "")
+                return result
+
+            # ── Normal path: LLM generation ───────────────────────────────────
             json_data = self.generate_json_from_prompt(prompt)
 
-            return self.process_from_json(json_data, open_freecad=open_freecad)
+            return self.process_from_json(json_data)
 
         except NotImplementedError as e:
             return {"status": "error", "error": {"code": "NOT_IMPLEMENTED", "message": str(e)}}
@@ -420,7 +418,7 @@ if __name__ == "__main__":
         json_data = json.load(f)
 
     pipeline = SynthoCadPipeline(rag_provider=config.get_rag_provider())
-    result = pipeline.process_from_json(json_data, open_freecad=False)
+    result = pipeline.process_from_json(json_data)
 
     if result["status"] == "success":
         print("[SUCCESS]")

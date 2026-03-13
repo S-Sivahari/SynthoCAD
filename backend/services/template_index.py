@@ -658,3 +658,126 @@ class TemplateIndex:
                     if name:
                         names.add(name)
         return names
+
+    def find_best_match(self, prompt: str, min_score: int = 8) -> Optional[Dict]:
+        """Find a single best-matching template for the prompt.
+
+        Scans both the registered KEYWORD_MAP and all .json files not yet
+        registered (auto-discovery), then returns the template data if one
+        candidate is clearly dominant.  Returns None when no confident
+        single match exists (caller should fall back to LLM generation).
+        """
+        prompt_lower = prompt.lower()
+        prompt_words = set(re.findall(r'\b[a-z0-9]+\b', prompt_lower))
+
+        scores: List[Tuple[str, int]] = []
+
+        # Score registered templates
+        for template_path, meta in self.index.items():
+            score = self._score_template_against_prompt(prompt_lower, prompt_words, meta)
+            if score > 0:
+                scores.append((template_path, score))
+
+        # Auto-scan all templates not yet in the registered map
+        registered = set(self.index.keys())
+        for json_file in self.templates_dir.rglob("*.json"):
+            try:
+                rel = json_file.relative_to(self.templates_dir)
+            except ValueError:
+                continue
+            rel_str = str(rel).replace("\\", "/")
+            if rel_str in registered:
+                continue
+            data = self._load_template(json_file)
+            if not data:
+                continue
+            adhoc_meta = self._build_adhoc_meta(data, json_file)
+            score = self._score_template_against_prompt(prompt_lower, prompt_words, adhoc_meta)
+            if score > 0:
+                scores.append((rel_str, score))
+
+        if not scores:
+            return None
+
+        scores.sort(key=lambda x: x[1], reverse=True)
+        best_path, best_score = scores[0]
+
+        if best_score < min_score:
+            return None
+
+        # Require an unambiguous winner: best must be ≥ 1.4× second-best
+        # unless the score is very high (≥ 15), in which case use it directly.
+        if len(scores) > 1:
+            second_score = scores[1][1]
+            if best_score < second_score * 1.4 and best_score < 15:
+                return None
+
+        full_path = self.templates_dir / best_path
+        if not full_path.exists():
+            return None
+
+        template_data = self._load_template(full_path)
+        if not template_data or not self._is_scl_format(template_data):
+            return None
+
+        logger.info(f"Template direct-match: {best_path} (score={best_score})")
+        return template_data
+
+    def _score_template_against_prompt(self, prompt_lower: str, prompt_words: set, meta: dict) -> int:
+        """Score a template's meta against a normalised prompt."""
+        score = 0
+        for keyword in meta.get("keywords", []):
+            kw_lower = keyword.lower()
+            # Multi-word phrase hit is worth more
+            if kw_lower in prompt_lower:
+                word_count = len(kw_lower.split())
+                score += 3 * word_count
+            # Individual word overlap
+            kw_words = set(re.findall(r'\b[a-z0-9]+\b', kw_lower))
+            matching_words = kw_words & prompt_words
+            if matching_words:
+                score += len(matching_words)
+
+        category = meta.get("category", "").lower()
+        if category and category in prompt_lower:
+            score += 2
+
+        description = meta.get("description", "").lower()
+        if description:
+            desc_words = set(re.findall(r'\b[a-z0-9]+\b', description))
+            score += len(desc_words & prompt_words)
+
+        return score
+
+    def _build_adhoc_meta(self, data: dict, json_file: Path) -> dict:
+        """Build keyword metadata from a template file's own content fields."""
+        keywords: List[str] = []
+
+        final_name = data.get("final_name", "")
+        if final_name:
+            normalized = re.sub(r'[_\-]', ' ', final_name).lower()
+            keywords.append(normalized)
+            keywords.extend(re.findall(r'\b[a-z0-9]+\b', normalized))
+
+        final_shape = data.get("final_shape", "")
+        if final_shape:
+            normalized = final_shape.lower()
+            keywords.append(normalized)
+            keywords.extend(re.findall(r'\b[a-z]+\b', normalized))
+
+        note = data.get("_engineering_note", "")
+        if note:
+            note_words = re.findall(r'\b[a-z]+\b', note.lower())
+            keywords.extend(note_words[:15])
+
+        stem = re.sub(r'[_\-]', ' ', json_file.stem).lower()
+        keywords.append(stem)
+        keywords.extend(stem.split())
+
+        category = data.get("_template_category", json_file.parent.name).lower().replace("_", " ")
+
+        return {
+            "keywords": list(set(k for k in keywords if len(k) > 1)),
+            "category": category,
+            "description": final_name,
+        }
