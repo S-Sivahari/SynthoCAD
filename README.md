@@ -237,6 +237,16 @@ npx serve
 4. **Cleanup Tab**: Manage storage and cleanup old files
 5. **Monitoring Tab**: View system statistics
 
+### Frontend UI Tuning
+
+- The default UI scale is controlled in [frontend/css/style.css](frontend/css/style.css) using `--ui-scale`.
+- Current value is `0.9`, so normal browser zoom (100%) looks like your preferred 90% density.
+- You can tweak this safely:
+  - `1.0` for native size
+  - `0.9` for compact workspace
+  - `1.1` for larger UI
+- Prebuilt Models now scroll inside their own section (`template-tree` and `template-grid`) with visible scrollbar thumbs.
+
 ### Command Line Interface
 
 ```bash

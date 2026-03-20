@@ -158,17 +158,22 @@ async function initApp() {
         step3dContainer.addEventListener('dragleave', handleViewerDragLeave);
         step3dContainer.addEventListener('drop', handleViewerDrop);
     }
+
+    const toolkitSection = document.querySelector('.template-toolkit-section');
+    const templateGrid = document.getElementById('template-grid');
+    if (toolkitSection && templateGrid) {
+        toolkitSection.addEventListener('wheel', (event) => {
+            const inScrollable = event.target.closest('#template-tree, #template-grid');
+            if (inScrollable) return;
+            event.preventDefault();
+            templateGrid.scrollTop += event.deltaY;
+        }, { passive: false });
+    }
 }
 
 function setSidepanelView(tab = 'workflow') {
-    const sideWorkflowBtn = document.getElementById('sidepanel-workflow-btn');
-    const sideParamsBtn = document.getElementById('sidepanel-params-btn');
     const sideWorkflow = document.getElementById('sidepanel-workflow');
     const sideParams = document.getElementById('sidepanel-params');
-
-    const showWorkflow = tab !== 'params';
-    if (sideWorkflowBtn) sideWorkflowBtn.classList.toggle('active', showWorkflow);
-    if (sideParamsBtn) sideParamsBtn.classList.toggle('active', !showWorkflow);
 
     // Workflow controls remain in the left column even when focusing params.
     if (sideWorkflow) sideWorkflow.classList.remove('hidden');
@@ -307,14 +312,6 @@ function setupEventListeners() {
     const modeBrepBtn   = document.getElementById('mode-brep-btn');
     const modeSectionWorkflow = document.getElementById('mode-section-workflow');
     const modeSectionBrep   = document.getElementById('mode-section-brep');
-
-    const sideWorkflowBtn = document.getElementById('sidepanel-workflow-btn');
-    const sideParamsBtn = document.getElementById('sidepanel-params-btn');
-
-    if (sideWorkflowBtn && sideParamsBtn) {
-        sideWorkflowBtn.addEventListener('click', () => setSidepanelView('workflow'));
-        sideParamsBtn.addEventListener('click', () => setSidepanelView('params'));
-    }
 
     function _switchMode(mode) {
         if (mode === 'workflow') {
