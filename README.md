@@ -45,34 +45,56 @@ python -m http.server 8000
 
 ## ✨ Features
 
-### 🎨 Generation
-- **Natural Language Input**: Describe CAD models in plain English
-- **JSON Input**: Direct SCL JSON schema support
-- **LLM-Powered**: Google Gemini for intelligent conversion
-- **Automatic Retry**: Built-in error recovery with exponential backoff
-- **FreeCAD Integration**: Automatic model visualization
+### 🎨 CAD Generation
+- **Prompt -> SCL JSON -> CadQuery -> STEP** end-to-end pipeline
+- **RAG-assisted retrieval** for template-guided generation
+- **Schema repair + validation retry loop** for robust JSON generation
+- **JSON-first generation path** for direct structured workflows
 
-### ⚙️ Parameter Management
-- **Extract Parameters**: Identify editable dimensions from generated code
-- **Real-time Editing**: Modify and regenerate models instantly
-- **Type Checking**: Validate parameter values before regeneration
+### 🧩 B-Rep Workflows
+- **Dedicated B-Rep generation loop** (`/api/v1/generate/brep`)
+- **Operation-sequence execution** via isolated worker subprocesses
+- **Step-by-step operation history** with generated STEP states
 
-### 🧹 Automatic Cleanup
-- **Age-based**: Delete files older than X days
-- **Count-based**: Keep only N most recent files
-- **Storage Monitoring**: Real-time disk usage statistics
-- **Safe Dry-run**: Preview deletions before execution
+### ✏️ STEP Editing & Preview
+- **7-view preview pipeline** (isometric/top/bottom/front/back/left/right)
+- **Feature extraction** (cylinders, planes, cones, bounding boxes)
+- **Natural-language STEP edits** (`/api/v1/edit/from-step`)
+- **Semantic B-Rep edit path** (`/api/v1/edit/brep`)
 
-### 🔄 Error Recovery
-- **Automatic Retry**: Exponential backoff for transient failures
-- **Smart Detection**: Distinguishes retryable vs permanent errors
-- **Rate Limit Handling**: Automatic backoff for API limits
-- **History Tracking**: Monitor all retry attempts
+### 🧰 Template Toolkit & Assets
+- **Catalog-driven template browser** with categories and build status
+- **Template asset rebuild APIs** for STEP + thumbnail generation
+- **Thumbnail fallback handling** and catalog summary endpoints
 
-### 📊 Monitoring
-- **Success Rates**: Track generation success/failure
-- **Performance Metrics**: Operation timing and statistics
-- **Error Diagnostics**: Detailed failure analysis
+### ⚙️ Parameters, Cleanup & Reliability
+- **AI/intelligent/legacy parameter extraction modes**
+- **Regenerate from updated parameters** through API endpoints
+- **Cleanup by age/count/model** with dry-run support
+- **Retry/error telemetry** and health/status endpoints
+
+---
+
+## 🔄 Pipeline Overview
+
+### Standard Prompt Pipeline
+1. Prompt validation (`validators/prompt_validator.py`)
+2. RAG/template context retrieval (`backend/rag/` + template index)
+3. LLM JSON synthesis and schema repair/validation (`validators/json_validator.py`)
+4. CadQuery code generation (`core/cadquery_generator.py`)
+5. STEP generation + optional parameter extraction
+
+### B-Rep Generation Pipeline
+1. Prompt-to-operation-sequence planning (`core/brep_generator.py`)
+2. Isolated per-operation execution (`core/brep_engine.py`)
+3. Iterative STEP state outputs + final artifact response
+
+### STEP Edit Pipeline
+1. Upload STEP (`/api/v1/edit/preview` or `/api/v1/edit/from-step`)
+2. Geometric analysis (`step_editor/step_analyzer.py`)
+3. 7-view rendering (`step_editor/step_renderer.py`)
+4. Edit synthesis (`step_editor/edit_pipeline.py`)
+5. Regenerated STEP output + feature payload
 
 ---
 
@@ -80,43 +102,61 @@ python -m http.server 8000
 
 ```
 SynthoCAD/
-├── frontend/                           # Web Interface
-│   ├── index.html                      # Main UI (5 tabs)
-│   ├── README.md                       # Frontend documentation
+├── frontend/                           # Web interface (served by Flask)
+│   ├── index.html                      # Main UI
+│   ├── README.md                       # Frontend notes
 │   ├── css/
-│   │   └── style.css                   # Responsive styling
+│   │   └── style.css                   # Unified UI styling
 │   └── js/
-│       ├── api.js                      # API client (15+ endpoints)
+│       ├── api.js                      # API client wrapper
 │       └── app.js                      # Application logic
 │
-├── backend/                            # Core System
-│   ├── llm_cli.py                      # CLI interface
-│   ├── scl_to_step.py                  # Direct JSON converter
+├── backend/                            # Backend services and pipelines
 │   ├── requirements.txt                # Python dependencies
 │   │
 │   ├── api/                            # REST API
 │   │   ├── app.py                      # Flask app
 │   │   └── routes/
-│   │       ├── generation_routes.py    # Generate endpoints
-│   │       ├── parameter_routes.py     # Parameter editing
-│   │       ├── viewer_routes.py        # FreeCAD control
+│   │       ├── generation_routes.py    # Prompt/JSON/B-Rep generation
+│   │       ├── edit_routes.py          # STEP preview + edit endpoints
+│   │       ├── parameter_routes.py     # Parameter extraction/update
+│   │       ├── template_routes.py      # Catalog + assets endpoints
 │   │       ├── cleanup_routes.py       # Storage management
-│   │       └── template_routes.py      # Template access
+│   │       └── viewer_routes.py        # FreeCAD integration
 │   │
 │   ├── core/                           # Core Logic
 │   │   ├── main.py                     # Pipeline orchestrator
 │   │   ├── cadquery_generator.py       # Code generation
+│   │   ├── brep_generator.py           # B-Rep planning loop
+│   │   ├── brep_engine.py              # Isolated B-Rep executor
 │   │   ├── scl_schema.json             # Schema definition
 │   │   └── config.py                   # Configuration
 │   │
+│   ├── step_editor/                    # STEP analysis/edit/render stack
+│   │   ├── edit_pipeline.py
+│   │   ├── step_analyzer.py
+│   │   └── step_renderer.py
+│   │
+│   ├── rag/                            # Retrieval-Augmented Generation
+│   │   ├── db.py
+│   │   ├── ingest.py
+│   │   ├── provider.py
+│   │   └── query.py
+│   │
 │   ├── services/                       # Business Logic
 │   │   ├── gemini_service.py           # LLM integration (with retry)
+│   │   ├── ollama_service.py           # Local LLM provider
 │   │   ├── freecad_instance_generator.py    # FreeCAD launcher
-│   │   ├── freecad_viewer_service.py   # Viewer wrapper
+│   │   ├── template_catalog_service.py # Template catalog state
+│   │   ├── template_asset_builder.py   # Build STEP + thumbnails
 │   │   ├── parameter_extractor.py      # Extract params
 │   │   ├── parameter_updater.py        # Update & regenerate
 │   │   ├── file_cleanup_service.py     # Storage management
 │   │   └── error_recovery_service.py   # Retry logic
+│   │
+│   ├── scripts/                        # Utilities and batch jobs
+│   │   ├── build_template_assets.py
+│   │   └── description_generator.py
 │   │
 │   ├── validators/                     # Input Validation
 │   │   ├── prompt_validator.py         # Prompt checking
@@ -126,21 +166,19 @@ SynthoCAD/
 │       ├── logger.py                   # Logging
 │       └── errors.py                   # Error classes
 │
-├── templates/                          # SCL Templates
-│   ├── basic/
-│   │   ├── cylinder_10x20.json
-│   │   └── box_50x30x10.json
-│   ├── mechanical/
-│   └── patterns/
+├── templates/                          # Source template JSON hierarchy
+├── data/                               # Runtime uploads/cache
+│   └── uploads/
 │
 ├── outputs/                            # Generated Files
 │   ├── json/                           # SCL JSON
 │   ├── py/                             # Python code
 │   ├── step/                           # STEP files
-│   └── logs/                           # Log files
+│   ├── previews/                       # 7-view preview renders
+│   ├── glb/                            # Optional GLB exports
+│   └── logs/                           # Runtime logs
 │
-└── data_set/                           # Training/Reference Data
-    └── 0000-0099/                      # CAD model dataset
+└── data_set/                           # Large CAD dataset shards
 ```
 
 ---
@@ -232,10 +270,10 @@ npx serve
 ### Web Interface (Recommended)
 
 1. **Open** `http://localhost:5000` in browser
-2. **Generate Tab**: Enter natural language description or JSON
-3. **Parameters Tab**: Extract and modify parameters
-4. **Cleanup Tab**: Manage storage and cleanup old files
-5. **Monitoring Tab**: View system statistics
+2. **Workflow Mode**: Generate or edit from prompt, upload STEP, preview 7 views
+3. **B-Rep Mode**: Run iterative B-Rep generation from natural language
+4. **Prebuilt Templates**: Browse categories, drag/drop templates into viewer
+5. **Right Rail Parameters**: Inspect features, group faces, and regenerate
 
 ### Frontend UI Tuning
 
@@ -299,8 +337,17 @@ curl -X POST http://localhost:5000/api/v1/generate/from-prompt \
   -H "Content-Type: application/json" \
   -d '{"prompt": "Create a cylinder 10mm radius, 20mm tall", "open_freecad": true}'
 
+# Generate via B-Rep operation loop
+curl -X POST http://localhost:5000/api/v1/generate/brep \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": "Create a base plate and add a central boss"}'
+
 # Extract parameters
 curl http://localhost:5000/api/v1/parameters/extract/Cylinder_10x20_generated.py
+
+# Preview STEP in 7 views
+curl -X POST http://localhost:5000/api/v1/edit/preview \
+  -F "file=@part.step"
 
 # Get storage statistics
 curl http://localhost:5000/api/v1/cleanup/stats
@@ -323,6 +370,7 @@ curl http://localhost:5000/api/v1/health
 POST   /api/v1/generate/from-prompt      # Generate from natural language
 POST   /api/v1/generate/from-json        # Generate from JSON
 POST   /api/v1/generate/validate-prompt  # Validate prompt
+POST   /api/v1/generate/brep             # Run B-Rep generation loop
 ```
 
 ### Parameters
@@ -330,6 +378,19 @@ POST   /api/v1/generate/validate-prompt  # Validate prompt
 GET    /api/v1/parameters/extract/<file>       # Extract parameters
 POST   /api/v1/parameters/update/<file>        # Update parameters
 POST   /api/v1/parameters/regenerate/<file>    # Update & regenerate
+GET    /api/v1/parameters/view/json/<file>     # Read generated JSON
+GET    /api/v1/parameters/view/python/<file>   # Read generated Python
+GET    /api/v1/parameters/view/step/<file>     # Read generated STEP text
+```
+
+### STEP Edit & Preview
+```
+POST   /api/v1/edit/preview              # Upload STEP + return 7-view preview
+POST   /api/v1/edit/analyze              # Upload STEP + return feature analysis
+POST   /api/v1/edit/from-step            # Upload STEP + edit prompt -> new STEP
+POST   /api/v1/edit/brep                 # Semantic B-Rep edit path
+POST   /api/v1/edit/upload               # Upload STEP for reuse
+POST   /api/v1/edit/preview-by-name      # Preview existing output STEP
 ```
 
 ### FreeCAD Viewer
@@ -351,8 +412,13 @@ GET    /api/v1/cleanup/retry-stats        # Retry statistics
 
 ### Templates
 ```
-GET    /api/v1/templates         # List all templates
-GET    /api/v1/templates/<name>  # Get specific template
+GET    /api/v1/templates/                         # List all templates
+GET    /api/v1/templates/catalog                  # Full template catalog
+GET    /api/v1/templates/categories               # Category tree
+GET    /api/v1/templates/by-category/<path>       # Templates by category
+POST   /api/v1/templates/rebuild-assets           # Rebuild STEP/thumbnail assets
+GET    /api/v1/templates/asset-status             # Catalog build status
+GET    /api/v1/templates/item/<path:template_id>  # Template by full ID
 ```
 
 ### Health
