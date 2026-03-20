@@ -557,15 +557,45 @@ class _Classifiers:
         if others or not cyls:
             return 0.0, {}
 
-        main_cyls = [c for c in cyls if c.radius == max(c2.radius for c2 in cyls)]
-        if not main_cyls:
+        # Must have a dominant cylindrical wall plus chamfer/fillet support faces.
+        # This intentionally rejects mixed shapes (e.g. box with attached boss/cone)
+        # where large planar side faces exist.
+        if len(cyls) > 2:
+            return 0.0, {}
+
+        if len(cones) + len(tori) == 0:
+            return 0.0, {}
+
+        main_radius = max(c.radius for c in cyls)
+        main_cyls = [c for c in cyls if abs(c.radius - main_radius) <= _TOL]
+        if len(main_cyls) != 1:
             return 0.0, {}
 
         cyl = main_cyls[0]
+
+        # Extra cylinders (if present) should be near the main radius, not tiny holes/bosses.
+        for c in cyls:
+            if c is cyl:
+                continue
+            if abs(c.radius - cyl.radius) > (2.0 * _TOL):
+                return 0.0, {}
+
+        # Cones/tori must align with the cylinder axis (end chamfers/fillets).
+        if any(not _vecs_parallel(cyl.axis, cn.axis) for cn in cones):
+            return 0.0, {}
+        if any(not _vecs_parallel(cyl.axis, tr.axis) for tr in tori):
+            return 0.0, {}
+
+        # Planes should only be end caps (parallel normal to cylinder axis).
+        if len(planes) > 2:
+            return 0.0, {}
+        if any(not _vecs_parallel(cyl.axis, p.normal) for p in planes):
+            return 0.0, {}
+
         h = _r(bbox.get("dz", 0))
         chamfers = len(cones)
         fillets = len(tori)
-        return 0.85, {
+        return 0.86, {
             "radius": cyl.radius, "diameter": _r(cyl.radius * 2), "height": h,
             "chamfers": chamfers, "fillets": fillets, "axis": cyl.axis,
         }

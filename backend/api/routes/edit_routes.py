@@ -362,6 +362,12 @@ def _build_instructions(features: dict) -> str:
             f"→ e.g. 'change {c['id']} radius to 8mm'"
         )
 
+    for h in features.get("holes", []):
+        lines.append(
+            f"  • '{h['id']}' — Hole, radius={h['radius_mm']}mm  "
+            f"→ e.g. 'enlarge hole {h['id']} to radius 4mm'"
+        )
+
     for p in features.get("planes", []):
         dims = p.get("dims", [0, 0])
         if dims[0] * dims[1] < 0.01:
@@ -370,6 +376,17 @@ def _build_instructions(features: dict) -> str:
         face_name = "top face" if n[2] > 0.5 else "bottom face" if n[2] < -0.5 else "side face"
         lines.append(
             f"  • '{p['id']}' — Plane ({face_name}), {dims[0]:.1f}×{dims[1]:.1f}mm"
+        )
+
+    for c in features.get("cones", []):
+        lines.append(
+            f"  • '{c['id']}' — Cone, ref radius={c['apex_radius_mm']}mm, "
+            f"half-angle={c['half_angle_deg']:.1f}°"
+        )
+
+    for s in features.get("spheres", []):
+        lines.append(
+            f"  • '{s['id']}' — Sphere, radius={s['radius_mm']}mm"
         )
 
     bb = features.get("bounding_box", {})

@@ -49,8 +49,10 @@ def analyze(step_path: str) -> Dict[str, Any]:
         raise ValueError(f"Failed to import STEP file '{step_path}': {e}")
 
     cylinders = []
+    holes = []
     planes = []
     cones = []
+    spheres = []
     tori = []
     other = []
 
@@ -79,14 +81,20 @@ def analyze(step_path: str) -> Dict[str, Any]:
                 dz = _round(bb.zmax - bb.zmin)
                 height = _round(max(dx, dy, dz))  # longest dim = cylinder axis
 
-                cylinders.append({
+                cyl_entry = {
                     "id": f"f{i}",
                     "radius_mm": radius,
                     "height_mm": height,
                     "is_hole": is_hole,
                     "location": [_round(loc.X()), _round(loc.Y()), _round(loc.Z())],
                     "axis": [_round(ax.Direction().X()), _round(ax.Direction().Y()), _round(ax.Direction().Z())],
-                })
+                }
+                cylinders.append(cyl_entry)
+                if is_hole:
+                    holes.append({
+                        **cyl_entry,
+                        "type": "hole",
+                    })
 
             elif surf_type == GeomAbs_Plane:
                 pln = adaptor.Plane()
@@ -139,9 +147,19 @@ def analyze(step_path: str) -> Dict[str, Any]:
                 cones.append({
                     "id": f"f{i}",
                     "apex_radius_mm": _round(cone.RefRadius()),
-                    "half_angle_deg": _round(cone.SemiAngle()),
+                    "half_angle_deg": _round(cone.SemiAngle() * 180.0 / 3.141592653589793),
                     "location": [_round(loc.X()), _round(loc.Y()), _round(loc.Z())],
                     "axis": [_round(ax.Direction().X()), _round(ax.Direction().Y()), _round(ax.Direction().Z())],
+                })
+
+            elif surf_type == GeomAbs_Sphere:
+                sph = adaptor.Sphere()
+                loc = sph.Location()
+                spheres.append({
+                    "id": f"f{i}",
+                    "radius_mm": _round(sph.Radius()),
+                    "diameter_mm": _round(sph.Radius() * 2),
+                    "location": [_round(loc.X()), _round(loc.Y()), _round(loc.Z())],
                 })
 
             elif surf_type == GeomAbs_Torus:
@@ -183,6 +201,12 @@ def analyze(step_path: str) -> Dict[str, Any]:
         summary_parts.append(f"{len(planes)} planar face(s).")
     if cones:
         summary_parts.append(f"{len(cones)} conical face(s).")
+    if spheres:
+        radii = sorted(set(s["radius_mm"] for s in spheres))
+        summary_parts.append(f"{len(spheres)} spherical face(s) with radii: {radii} mm.")
+    if holes:
+        hole_radii = sorted(set(h["radius_mm"] for h in holes))
+        summary_parts.append(f"{len(holes)} hole face(s) with radii: {hole_radii} mm.")
     if tori:
         summary_parts.append(f"{len(tori)} toroidal face(s) (e.g. fillets).")
 
@@ -211,10 +235,54 @@ def analyze(step_path: str) -> Dict[str, Any]:
         except Exception as e:
             logger.warning(f"Shape recognition failed: {e}")
 
+    # Fallback sphere detection:
+    # Some STEP exporters represent spheres as trimmed/revolved surfaces that
+    # don't show up as GeomAbs_Sphere per-face. If the topology recognizer
+    # confidently identifies a sphere component, synthesize per-face sphere
+    # entries so the viewer can classify clicked faces correctly.
+    sphere_face_ids = {s["id"] for s in spheres}
+    for block in blocks:
+        if block.get("shape_type") != "sphere":
+            continue
+
+        params = block.get("parameters", {}) or {}
+        bb = block.get("bounding_box", {}) or {}
+        radius = params.get("radius")
+        if radius is None:
+            diameter = params.get("diameter")
+            if diameter is not None:
+                radius = diameter / 2.0
+
+        if radius is None:
+            dx = bb.get("dx", 0.0)
+            dy = bb.get("dy", 0.0)
+            dz = bb.get("dz", 0.0)
+            radius = max(dx, dy, dz) / 2.0
+
+        center = [
+            _round((bb.get("xmin", 0.0) + bb.get("xmax", 0.0)) / 2.0),
+            _round((bb.get("ymin", 0.0) + bb.get("ymax", 0.0)) / 2.0),
+            _round((bb.get("zmin", 0.0) + bb.get("zmax", 0.0)) / 2.0),
+        ]
+
+        for fid in block.get("face_ids", []):
+            if fid in sphere_face_ids:
+                continue
+            sphere_entry = {
+                "id": fid,
+                "radius_mm": _round(radius),
+                "diameter_mm": _round(radius * 2),
+                "location": center,
+            }
+            spheres.append(sphere_entry)
+            sphere_face_ids.add(fid)
+
     result = {
         "cylinders": cylinders,
+        "holes": holes,
         "planes": planes,
         "cones": cones,
+        "spheres": spheres,
         "tori": tori,
         "other_faces": other,
         "bounding_box": bounding_box,

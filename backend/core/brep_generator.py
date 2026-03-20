@@ -2,6 +2,7 @@ import json
 import logging
 import re
 import uuid
+from pathlib import Path
 from typing import Dict, Any, List
 
 from core import config
@@ -25,6 +26,7 @@ class BRepGenerator:
             "create_cylinder",
             "create_cone",
             "create_sphere",
+            "loop_pattern",
             "boolean_cut",
             "boolean_union",
             "boolean_intersect",
@@ -53,6 +55,46 @@ class BRepGenerator:
             if op_type.startswith("create_") or op_type in ("fillet_edges", "chamfer_edges"):
                 params = op.get("params", {})
                 fixed_op["params"] = params if isinstance(params, dict) else {}
+            elif op_type == "loop_pattern":
+                pattern = op.get("pattern", "linear")
+                action = op.get("action", "cut")
+                instances = op.get("instances", op.get("count", 1))
+                tool = op.get("tool", {})
+
+                if not isinstance(pattern, str) or pattern.lower() not in ("linear", "circular", "parabolic"):
+                    dropped_count += 1
+                    continue
+                if not isinstance(action, str) or action.lower() not in ("cut", "union", "intersect"):
+                    dropped_count += 1
+                    continue
+                if not isinstance(tool, dict) or not isinstance(tool.get("type"), str):
+                    dropped_count += 1
+                    continue
+
+                try:
+                    instances_int = int(instances)
+                except Exception:
+                    instances_int = 1
+                if instances_int < 1:
+                    instances_int = 1
+
+                fixed_op["pattern"] = pattern.lower()
+                fixed_op["action"] = action.lower()
+                fixed_op["instances"] = instances_int
+                fixed_op["tool"] = {
+                    "type": tool.get("type"),
+                    "params": tool.get("params", {}) if isinstance(tool.get("params", {}), dict) else {},
+                }
+
+                if fixed_op["pattern"] == "linear":
+                    linear = op.get("linear", {})
+                    fixed_op["linear"] = linear if isinstance(linear, dict) else {}
+                elif fixed_op["pattern"] == "circular":
+                    circular = op.get("circular", {})
+                    fixed_op["circular"] = circular if isinstance(circular, dict) else {}
+                else:
+                    parabolic = op.get("parabolic", {})
+                    fixed_op["parabolic"] = parabolic if isinstance(parabolic, dict) else {}
             else:
                 tool = op.get("tool", {})
                 if not isinstance(tool, dict):
@@ -273,6 +315,14 @@ class BRepGenerator:
         raise ValueError(f"Unable to parse valid JSON array from LLM response. {condensed}")
         
     def generate_brep_sequence_from_prompt(self, prompt: str) -> List[Dict[str, Any]]:
+        loop_pattern_extra = ""
+        loop_prompt_path = Path(__file__).resolve().parent.parent / "PROMPT_loop_patterns.md"
+        if loop_prompt_path.exists():
+            try:
+                loop_pattern_extra = "\n\n" + loop_prompt_path.read_text(encoding="utf-8").strip()
+            except Exception as e:
+                logger.warning(f"[Generator] Failed to read loop-pattern prompt file: {e}")
+
         system_prompt = """You are an architectural CAD engineer. The user will ask for a 3D model. 
 Decompose the model into a sequential list of standard Boundary Representation (B-Rep) operations.
 
@@ -284,21 +334,37 @@ CRITICAL OUTPUT COMPLETENESS RULES:
 5. Final character of the response must be `]`.
 
 CRITICAL POSITIONING RULES:
-1. `create_box` with origin [X,Y,Z] is centered on X and Y, and extends UPWARDS in Z. 
-   - A box at [0,0,0] with length=100, width=50, height=20 spans X:[-50, 50], Y:[-25, 25], Z:[0, 20].
-   - Do NOT offset origin to corners. Origin represents the center midpoint of the bottom face.
-2. `create_cylinder` with origin [X,Y,Z] is directly centered at X,Y, and extends UPWARDS along its `axis` (Z by default).
-   - Its bounding box spans X:[X-R, X+R], Y:[Y-R, Y+R], Z:[Z, Z+height].
+1. Use XZ as the base plane and treat +Y as the default up/extrusion direction.
+2. `create_box` with origin [X,Y,Z] is centered on X and Z, and extends UPWARDS in Y by default.
+    - A box at [0,0,0] with length=100, width=50, height=20 spans X:[-50, 50], Z:[-25, 25], Y:[0, 20].
+    - Do NOT offset origin to corners. Origin represents the center midpoint of the bottom face.
+3. `create_cylinder` with origin [X,Y,Z] is directly centered at X,Z, and extends UPWARDS along its `axis` (Y by default).
+    - Its default axis should be [0,1,0] unless the user explicitly requests another direction.
 3. `boolean_cut` and `boolean_union` tools use the EXACT same origin rules as primitive creation. 
    - To cut a hole in the exact center of a parent box, the cut origin MUST perfectly match the parent origin X and Y coordinates.
 
 OUTPUT EXACTLY ONLY A JSON ARRAY OF OPERATIONS. Do not include markdown fences, just the raw JSON.
 Supported types:
 - create_box: params: {length, width, height, origin: [x,y,z]}
-- create_cylinder: params: {radius, height, origin: [x,y,z], axis: [dx,dy,dz]}
+- create_cylinder: params: {radius, height, origin: [x,y,z], axis: [dx,dy,dz]} (default axis [0,1,0])
+- create_cone: params: {base_radius, top_radius, height, origin: [x,y,z], axis: [dx,dy,dz]}
 - create_sphere: params: {radius, origin: [x,y,z]}
 - boolean_cut: tool: {type (box|cylinder|cone|sphere), params: {...same as create...}}
 - boolean_union: tool: {...}
+- boolean_intersect: tool: {...}
+- loop_pattern:
+    - pattern: "linear" | "circular" | "parabolic"
+    - action: "cut" | "union" | "intersect"
+    - instances: integer >= 1
+    - tool: {type (box|cylinder|cone|sphere), params: {...}}
+    - linear: {step:[dx,dy,dz]} OR {direction:[dx,dy,dz], spacing:mm}
+    - circular: {center:[x,y,z], radius:mm, start_angle_deg:number, angle_step_deg:number}  // defaults to XZ circle around Y axis
+    - parabolic: {axis:"x"|"y", x_step:mm, a:number, b:number, c:number}
+
+Loop guidance:
+- Use loop_pattern whenever repeated features are requested (array, pattern, repeated holes, bolt circle, radial copies).
+- For repeated holes or slots, prefer loop_pattern with action "cut".
+- Keep each operation deterministic with explicit numeric values.
 
 Example creating a box with a hole in the exact dead center:
 [
@@ -321,16 +387,19 @@ Example creating a box with a hole in the exact dead center:
         "radius": 5.0,
         "height": 20.0,
         "origin": [0, 0, 0],
-        "axis": [0, 0, 1]
+                "axis": [0, 1, 0]
       }
     }
   }
 ]
         """
-        
+
+        if loop_pattern_extra:
+            system_prompt = f"{system_prompt}\n\n{loop_pattern_extra}"
+
         user_prompt = f"Target model description: {prompt}"
         response_text = ""
-        
+
         logger.info("[Generator] Requesting sequence from LLM...")
         try:
             combined_prompt = f"{system_prompt}\n\n{user_prompt}"
@@ -342,7 +411,7 @@ Example creating a box with a hole in the exact dead center:
             )
             sequence = self._parse_sequence_response(response_text)
             return sequence
-            
+
         except Exception as e:
             dump_path = ""
             if response_text:

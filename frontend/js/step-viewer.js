@@ -837,12 +837,40 @@ const stepViewer = (() => {
             });
         });
 
+        const holeIds = new Set((features.holes || []).map(h => h.id));
+
+        function isBlockCompatible(surfType, block) {
+            if (!block) return false;
+            const shape = (block.shape || '').toLowerCase();
+            const conf = parseFloat(block.confidence);
+            if (Number.isFinite(conf) && conf < 60) return false;
+
+            if (surfType === 'Plane') {
+                return ['box', 'filleted_box', 'l_bracket', 'hex_prism', 'generic_solid'].includes(shape);
+            }
+            if (surfType === 'Cylinder' || surfType === 'Hole') {
+                return shape.includes('cylinder') || ['tube', 'disc', 'flange', 'threaded_rod', 'splined_shaft', 'pipe_bend'].includes(shape);
+            }
+            if (surfType === 'Cone') {
+                return shape === 'cone' || shape.includes('cylinder');
+            }
+            if (surfType === 'Sphere') {
+                return shape === 'sphere';
+            }
+            if (surfType === 'Torus') {
+                return shape === 'torus' || shape === 'pipe_bend';
+            }
+            return false;
+        }
+
         // Cylinders
         (features.cylinders || []).forEach(c => {
-            const blk = faceToBlock[c.id];
+            const surfType = holeIds.has(c.id) ? 'Hole' : 'Cylinder';
+            const blkRaw = faceToBlock[c.id];
+            const blk = isBlockCompatible(surfType, blkRaw) ? blkRaw : null;
             _faceIndex[c.id] = {
-                surfType: 'Cylinder',
-                label: `Ø${(c.radius_mm * 2).toFixed(2)} mm`,
+                surfType,
+                label: `${surfType === 'Hole' ? 'Hole ' : ''}Ø${(c.radius_mm * 2).toFixed(2)} mm`,
                 details: [
                     `Radius: ${c.radius_mm} mm`,
                     `Axis: [${c.axis.map(v => v.toFixed(2)).join(', ')}]`,
@@ -854,7 +882,8 @@ const stepViewer = (() => {
 
         // Planes
         (features.planes || []).forEach(p => {
-            const blk = faceToBlock[p.id];
+            const blkRaw = faceToBlock[p.id];
+            const blk = isBlockCompatible('Plane', blkRaw) ? blkRaw : null;
             const dim = p.dims ? `${p.dims[0].toFixed(1)} × ${p.dims[1].toFixed(1)} mm` : '';
             _faceIndex[p.id] = {
                 surfType: 'Plane',
@@ -870,13 +899,29 @@ const stepViewer = (() => {
 
         // Cones
         (features.cones || []).forEach(c => {
-            const blk = faceToBlock[c.id];
+            const blkRaw = faceToBlock[c.id];
+            const blk = isBlockCompatible('Cone', blkRaw) ? blkRaw : null;
             _faceIndex[c.id] = {
                 surfType: 'Cone',
-                label: `r=${c.apex_radius_mm} mm, α=${(c.half_angle_deg * 180 / Math.PI).toFixed(1)}°`,
+                label: `r=${c.apex_radius_mm} mm, α=${c.half_angle_deg.toFixed(1)}°`,
                 details: [
                     `Ref radius: ${c.apex_radius_mm} mm`,
-                    `Half-angle: ${(c.half_angle_deg * 180 / Math.PI).toFixed(1)}°`,
+                    `Half-angle: ${c.half_angle_deg.toFixed(1)}°`,
+                ],
+                block: blk || null,
+            };
+        });
+
+        // Spheres
+        (features.spheres || []).forEach(s => {
+            const blkRaw = faceToBlock[s.id];
+            const blk = isBlockCompatible('Sphere', blkRaw) ? blkRaw : null;
+            _faceIndex[s.id] = {
+                surfType: 'Sphere',
+                label: `Ø${(s.diameter_mm ?? (s.radius_mm * 2)).toFixed(2)} mm`,
+                details: [
+                    `Radius: ${s.radius_mm} mm`,
+                    `Location: [${s.location.map(v => v.toFixed(2)).join(', ')}]`,
                 ],
                 block: blk || null,
             };
@@ -884,7 +929,8 @@ const stepViewer = (() => {
 
         // Tori
         (features.tori || []).forEach(t => {
-            const blk = faceToBlock[t.id];
+            const blkRaw = faceToBlock[t.id];
+            const blk = isBlockCompatible('Torus', blkRaw) ? blkRaw : null;
             _faceIndex[t.id] = {
                 surfType: 'Torus',
                 label: `R=${t.major_radius_mm} r=${t.minor_radius_mm} mm`,

@@ -807,10 +807,13 @@ function renderOcpParameters(features) {
         });
     }
 
-    // 1. Cylinders
-    if (features.cylinders && features.cylinders.length > 0) {
+    const holeIds = new Set((features.holes || []).map(h => h.id));
+    const nonHoleCylinders = (features.cylinders || []).filter(c => !holeIds.has(c.id));
+
+    // 1. Cylinders (external)
+    if (nonHoleCylinders.length > 0) {
         html += `<div class="ocp-section-title">Cylindrical Faces</div>`;
-        features.cylinders.forEach((c) => {
+        nonHoleCylinders.forEach((c) => {
             html += `
                 <div class="ocp-card" data-face-id="${c.id}" data-type="cylinder" onclick="handleFaceCardClick(event,'${c.id}')">
                     <div class="ocp-card-header">
@@ -828,6 +831,34 @@ function renderOcpParameters(features) {
                             <input type="number" class="ocp-input-small" data-key="loc-x" value="${c.location[0]}" data-original="${c.location[0]}" step="0.5">
                             <input type="number" class="ocp-input-small" data-key="loc-y" value="${c.location[1]}" data-original="${c.location[1]}" step="0.5">
                             <input type="number" class="ocp-input-small" data-key="loc-z" value="${c.location[2]}" data-original="${c.location[2]}" step="0.5">
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+    }
+
+    // 1b. Holes (internal cylindrical faces)
+    if (features.holes && features.holes.length > 0) {
+        html += `<div class="ocp-section-title">Hole Faces</div>`;
+        features.holes.forEach((h) => {
+            html += `
+                <div class="ocp-card" data-face-id="${h.id}" data-type="cylinder" onclick="handleFaceCardClick(event,'${h.id}')">
+                    <div class="ocp-card-header">
+                        <span class="ocp-face-id">${h.id.toUpperCase()}</span>
+                        <span class="ocp-face-type">Hole</span>
+                        <div class="face-group-dots" id="gdots-${h.id}"></div>
+                    </div>
+                    <div class="ocp-row">
+                        <label>Radius (mm)</label>
+                        <input type="number" class="ocp-input" data-key="radius_mm" value="${h.radius_mm}" data-original="${h.radius_mm}" step="0.1">
+                    </div>
+                    <div class="ocp-row">
+                        <label>Location (X, Y, Z)</label>
+                        <div class="ocp-xyz">
+                            <input type="number" class="ocp-input-small" data-key="loc-x" value="${h.location[0]}" data-original="${h.location[0]}" step="0.5">
+                            <input type="number" class="ocp-input-small" data-key="loc-y" value="${h.location[1]}" data-original="${h.location[1]}" step="0.5">
+                            <input type="number" class="ocp-input-small" data-key="loc-z" value="${h.location[2]}" data-original="${h.location[2]}" step="0.5">
                         </div>
                     </div>
                 </div>
@@ -862,6 +893,42 @@ function renderOcpParameters(features) {
                             <input type="number" class="ocp-input-small" data-key="loc-z" value="${p.location[2]}" data-original="${p.location[2]}" step="0.5">
                         </div>
                     </div>
+                </div>
+            `;
+        });
+    }
+
+    // 3. Cones
+    if (features.cones && features.cones.length > 0) {
+        html += `<div class="ocp-section-title">Conical Faces</div>`;
+        features.cones.forEach((c) => {
+            html += `
+                <div class="ocp-card" data-face-id="${c.id}" data-type="cone" onclick="handleFaceCardClick(event,'${c.id}')">
+                    <div class="ocp-card-header">
+                        <span class="ocp-face-id">${c.id.toUpperCase()}</span>
+                        <span class="ocp-face-type">Cone</span>
+                        <div class="face-group-dots" id="gdots-${c.id}"></div>
+                    </div>
+                    <div class="ocp-row"><label>Ref Radius</label><span class="ocp-static">${c.apex_radius_mm} mm</span></div>
+                    <div class="ocp-row"><label>Half Angle</label><span class="ocp-static">${c.half_angle_deg.toFixed(2)}°</span></div>
+                </div>
+            `;
+        });
+    }
+
+    // 4. Spheres
+    if (features.spheres && features.spheres.length > 0) {
+        html += `<div class="ocp-section-title">Spherical Faces</div>`;
+        features.spheres.forEach((s) => {
+            html += `
+                <div class="ocp-card" data-face-id="${s.id}" data-type="sphere" onclick="handleFaceCardClick(event,'${s.id}')">
+                    <div class="ocp-card-header">
+                        <span class="ocp-face-id">${s.id.toUpperCase()}</span>
+                        <span class="ocp-face-type">Sphere</span>
+                        <div class="face-group-dots" id="gdots-${s.id}"></div>
+                    </div>
+                    <div class="ocp-row"><label>Radius</label><span class="ocp-static">${s.radius_mm} mm</span></div>
+                    <div class="ocp-row"><label>Diameter</label><span class="ocp-static">${(s.diameter_mm ?? (s.radius_mm * 2)).toFixed(2)} mm</span></div>
                 </div>
             `;
         });
